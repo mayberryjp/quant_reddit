@@ -1,17 +1,21 @@
 """Worker process entry point (supervisord ``[program:worker]``).
 
-Slice 0 provides a minimal heartbeat loop so the container's worker process is
-valid. Slice 6 replaces the body with the ``ingest → distill → emit``
-orchestration cycle.
+Wires the real Reddit (PRAW), Ollama, and downstream-emitter components into the
+orchestrator's ``ingest → distill → emit`` loop.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-import time
 
-from app.config import settings
+from app.db import get_engine
+from app.repository.postgres import RedditRepository
+from app.services import orchestrator
+from app.services.ollama_client import OllamaClient
+from app.services.reddit_client import PrawRedditSource
+from app.services.sentiment_emitter import SentimentEmitter
+from app.services.signal_emitter import SignalEmitter
 
 SERVICE_NAME = "quant-reddit-worker"
 log = logging.getLogger(SERVICE_NAME)
@@ -25,10 +29,14 @@ logging.basicConfig(
 
 
 def main() -> None:
-    log.info("quant_reddit worker starting (poll interval %ss)", settings.poll_interval)
-    while True:
-        log.info("worker heartbeat")
-        time.sleep(settings.poll_interval)
+    repo = RedditRepository(get_engine())
+    orchestrator.run_forever(
+        repo,
+        reddit_source=PrawRedditSource.from_settings(),
+        llm_client=OllamaClient(),
+        sentiment_emitter=SentimentEmitter(repo),
+        signal_emitter=SignalEmitter(repo),
+    )
 
 
 if __name__ == "__main__":
