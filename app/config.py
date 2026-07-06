@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     post_batch: int = 50
     comments_per_post: int = 50
     poll_interval: int = 300
+    # Selective comment fetching (owner guidance): only pull a post's comments
+    # when it looks high-signal, to stay under Reddit's ~100 req/min budget.
+    comment_min_score: int = 50
+    comment_min_comments: int = 20
 
     # --- Emission sources / tuning ---------------------------------------
     signal_source: str = "reddit-wsb-v1"
