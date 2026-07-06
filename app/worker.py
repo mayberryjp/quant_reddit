@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from app.config import log_config_problems
 from app.db import get_engine
 from app.repository.postgres import RedditRepository
 from app.services import orchestrator
@@ -29,6 +30,7 @@ logging.basicConfig(
 
 
 def main() -> None:
+    log_config_problems()
     repo = RedditRepository(get_engine())
     orchestrator.run_forever(
         repo,

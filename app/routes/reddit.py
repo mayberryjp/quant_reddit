@@ -39,12 +39,25 @@ def _param(name: str) -> str | None:
     return request.params.get(name) or None
 
 
+_ITEM_KINDS = {"post", "comment"}
+_PROCESS_STATES = {"new", "distilled", "skipped", "failed"}
+_TARGETS = {"signals", "sentiment"}
+_STATUSES = {"accepted", "duplicate", "unresolved", "failed"}
+
+
+def _choice(name: str, allowed: set[str]) -> str | None:
+    value = request.params.get(name) or None
+    if value is not None and value not in allowed:
+        raise _error(422, f"invalid {name}; allowed: {', '.join(sorted(allowed))}")
+    return value
+
+
 @sub.get("/reddit/items/recent")
 def items_recent():
     page, page_size = _page_params()
     items, total = get_repo().list_items(
-        kind=_param("kind"),
-        process_state=_param("process_state"),
+        kind=_choice("kind", _ITEM_KINDS),
+        process_state=_choice("process_state", _PROCESS_STATES),
         subreddit=_param("subreddit"),
         page=page,
         page_size=page_size,
@@ -79,8 +92,8 @@ def extractions_recent():
 def emissions_recent():
     page, page_size = _page_params()
     items, total = get_repo().list_emissions(
-        target=_param("target"),
-        status=_param("status"),
+        target=_choice("target", _TARGETS),
+        status=_choice("status", _STATUSES),
         ticker=_param("ticker"),
         page=page,
         page_size=page_size,
