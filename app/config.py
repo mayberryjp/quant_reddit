@@ -10,6 +10,9 @@ unprefixed.
 
 from __future__ import annotations
 
+import logging
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -84,3 +87,39 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+_log = logging.getLogger("quant_reddit.config")
+
+
+def validate_config(s: Settings, database_url: str | None) -> list[str]:
+    """Return human-readable configuration problems (never raises).
+
+    Secret *values* are never included — only variable names — so this output is
+    safe to log.
+    """
+    problems: list[str] = []
+    if not database_url:
+        problems.append(
+            "DATABASE_URL is not set (required for persistence and migrations)"
+        )
+    if not s.reddit_client_id or not s.reddit_client_secret:
+        problems.append(
+            "REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set "
+            "(required for Reddit ingestion)"
+        )
+    for name, url in (
+        ("QUANT_SIGNALS_URL", s.quant_signals_url),
+        ("QUANT_SENTIMENT_URL", s.quant_sentiment_url),
+        ("OLLAMA_BASE_URL", s.ollama_base_url),
+    ):
+        if not (url.startswith("http://") or url.startswith("https://")):
+            problems.append(f"{name} must be an http(s) URL")
+    return problems
+
+
+def log_config_problems() -> list[str]:
+    """Validate the active configuration at startup, logging any problems."""
+    problems = validate_config(settings, os.environ.get("DATABASE_URL"))
+    for problem in problems:
+        _log.warning("config validation: %s", problem)
+    return problems
