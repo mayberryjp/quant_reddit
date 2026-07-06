@@ -38,6 +38,10 @@ def _val(value):
     return value.value if isinstance(value, enum.Enum) else value
 
 
+# Worker liveness heartbeat is stored as an ingest_cursor row (no schema change).
+HEARTBEAT_SOURCE_KEY = "__worker_heartbeat__"
+
+
 # ----------------------------------------------------------------------------
 # Row <-> model conversion
 # ----------------------------------------------------------------------------
@@ -338,6 +342,125 @@ class RedditRepository:
                     )
                 )
         return self.get_cursor(source_key)
+
+    # ------------------------------------------------------------------
+    # Read / pagination (Slice 7)
+    # ------------------------------------------------------------------
+    def list_items(
+        self,
+        *,
+        kind: str | None = None,
+        process_state: str | None = None,
+        subreddit: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[RedditItem], int]:
+        conditions: list = []
+        if kind:
+            conditions.append(reddit_items.c.kind == kind)
+        if process_state:
+            conditions.append(reddit_items.c.process_state == process_state)
+        if subreddit:
+            conditions.append(reddit_items.c.subreddit == subreddit)
+        where = sa.and_(*conditions) if conditions else sa.true()
+        offset = max(page - 1, 0) * page_size
+        with self.engine.connect() as conn:
+            total = conn.execute(
+                sa.select(sa.func.count()).select_from(reddit_items).where(where)
+            ).scalar_one()
+            rows = (
+                conn.execute(
+                    sa.select(reddit_items)
+                    .where(where)
+                    .order_by(reddit_items.c.fetched_at.desc(), reddit_items.c.id.desc())
+                    .limit(page_size)
+                    .offset(offset)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_item(r) for r in rows], int(total)
+
+    def list_extractions(
+        self,
+        *,
+        model: str | None = None,
+        prompt_version: str | None = None,
+        reddit_fullname: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[LlmExtraction], int]:
+        conditions: list = []
+        if model:
+            conditions.append(llm_extractions.c.model == model)
+        if prompt_version:
+            conditions.append(llm_extractions.c.prompt_version == prompt_version)
+        if reddit_fullname:
+            conditions.append(llm_extractions.c.reddit_fullname == reddit_fullname)
+        where = sa.and_(*conditions) if conditions else sa.true()
+        offset = max(page - 1, 0) * page_size
+        with self.engine.connect() as conn:
+            total = conn.execute(
+                sa.select(sa.func.count()).select_from(llm_extractions).where(where)
+            ).scalar_one()
+            rows = (
+                conn.execute(
+                    sa.select(llm_extractions)
+                    .where(where)
+                    .order_by(
+                        llm_extractions.c.created_at.desc(), llm_extractions.c.id.desc()
+                    )
+                    .limit(page_size)
+                    .offset(offset)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_extraction(r) for r in rows], int(total)
+
+    def list_emissions(
+        self,
+        *,
+        target: str | None = None,
+        status: str | None = None,
+        ticker: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[EmissionRecord], int]:
+        conditions: list = []
+        if target:
+            conditions.append(emission_log.c.target == target)
+        if status:
+            conditions.append(emission_log.c.status == status)
+        if ticker:
+            conditions.append(emission_log.c.ticker == ticker)
+        where = sa.and_(*conditions) if conditions else sa.true()
+        offset = max(page - 1, 0) * page_size
+        with self.engine.connect() as conn:
+            total = conn.execute(
+                sa.select(sa.func.count()).select_from(emission_log).where(where)
+            ).scalar_one()
+            rows = (
+                conn.execute(
+                    sa.select(emission_log)
+                    .where(where)
+                    .order_by(emission_log.c.created_at.desc(), emission_log.c.id.desc())
+                    .limit(page_size)
+                    .offset(offset)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_emission(r) for r in rows], int(total)
+
+    def set_heartbeat(self) -> None:
+        """Record a worker liveness heartbeat."""
+        self.upsert_cursor(HEARTBEAT_SOURCE_KEY)
+
+    def get_heartbeat(self) -> datetime | None:
+        """Return the last worker heartbeat time, or None if never set."""
+        cur = self.get_cursor(HEARTBEAT_SOURCE_KEY)
+        return cur.updated_at if cur is not None else None
 
     # ------------------------------------------------------------------
     # Operational
