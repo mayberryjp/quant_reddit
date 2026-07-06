@@ -9,7 +9,7 @@ import sys
 
 from bottle import Bottle, response
 
-from app.routes import health
+from app.routes import health, reddit
 
 SERVICE_NAME = "quant-reddit-api"
 log = logging.getLogger(SERVICE_NAME)
@@ -32,6 +32,7 @@ def create_app() -> Bottle:
     """Assemble the Bottle application from its route modules."""
     app = Bottle()
     app.merge(health.sub)
+    app.merge(reddit.sub)
 
     def _json_error(error):
         response.content_type = "application/json"

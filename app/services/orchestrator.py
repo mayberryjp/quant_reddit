@@ -26,7 +26,7 @@ from datetime import date
 
 from app.config import settings
 from app.models.domain import ProcessState
-from app.repository.postgres import RedditRepository
+from app.repository.postgres import HEARTBEAT_SOURCE_KEY, RedditRepository
 from app.services.distiller import PROMPT_VERSION, LlmClient, distill_item
 from app.services.reddit_client import IngestResult, RedditSource, ingest_once
 from app.services.sentiment_emitter import SentimentEmitter
@@ -35,8 +35,8 @@ from app.timeutil import utcnow
 
 log = logging.getLogger("quant_reddit.orchestrator")
 
-# Heartbeat is stored as an ingest_cursor row so no schema change is needed.
-HEARTBEAT_KEY = "__worker_heartbeat__"
+# Re-exported from the repository so callers/tests have one source of truth.
+HEARTBEAT_KEY = HEARTBEAT_SOURCE_KEY
 
 # Bound how many freshly-ingested items we distill per cycle (each is an LLM call).
 _DEFAULT_DISTILL_LIMIT = 200
@@ -118,7 +118,7 @@ def run_cycle(
     )
     result.signals_emitted = len(emitted_signals)
 
-    repo.upsert_cursor(HEARTBEAT_KEY)
+    repo.set_heartbeat()
     return result
 
 
