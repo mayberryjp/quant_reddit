@@ -28,7 +28,9 @@ services:
       QUANT_SENTIMENT_URL: ${QUANT_SENTIMENT_URL:-http://host.docker.internal:8017}
       REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
       REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
-      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-quant_reddit/0.1 by quant-platform}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-docker:quant_reddit:v0.1.0 (by /u/homelabids)}
+      REDDIT_USERNAME: ${REDDIT_USERNAME:-}
+      REDDIT_PASSWORD: ${REDDIT_PASSWORD:-}
     ports:
       - "8018:8018"
 

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         default="", validation_alias="REDDIT_CLIENT_SECRET"
     )
     reddit_user_agent: str = Field(
-        default="quant_reddit/0.1 by quant-platform",
+        default="docker:quant_reddit:v0.1.0 (by /u/homelabids)",
         validation_alias="REDDIT_USER_AGENT",
     )
     reddit_username: str | None = Field(
