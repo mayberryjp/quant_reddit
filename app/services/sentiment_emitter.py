@@ -28,8 +28,14 @@ log = logging.getLogger("quant_reddit.sentiment_emitter")
 _DELIVERED = (EmissionStatus.accepted, EmissionStatus.duplicate)
 
 
-def sentiment_idempotency_key(source: str, reddit_fullname: str, ticker: str) -> str:
-    return f"{source}:{reddit_fullname}:{ticker}"
+def sentiment_idempotency_key(
+    source: str,
+    reddit_fullname: str,
+    ticker: str,
+    model: str,
+    prompt_version: str,
+) -> str:
+    return f"{source}:{reddit_fullname}:{ticker}:{model}:{prompt_version}"
 
 
 def build_sentiment_request(
@@ -43,7 +49,13 @@ def build_sentiment_request(
 ) -> dict:
     return {
         "source": source,
-        "idempotency_key": sentiment_idempotency_key(source, item.fullname, finding.ticker),
+        "idempotency_key": sentiment_idempotency_key(
+            source,
+            item.fullname,
+            finding.ticker,
+            model,
+            prompt_version,
+        ),
         "subject_type": "ticker",
         "subject": finding.ticker,
         "sentiment_score": finding.sentiment_score,
@@ -91,7 +103,13 @@ class SentimentEmitter:
         model: str,
         prompt_version: str,
     ) -> EmissionRecord:
-        key = sentiment_idempotency_key(self.source, item.fullname, finding.ticker)
+        key = sentiment_idempotency_key(
+            self.source,
+            item.fullname,
+            finding.ticker,
+            model,
+            prompt_version,
+        )
         existing = self.repo.get_emission(EmissionTarget.sentiment, key)
         if existing is not None and existing.status in _DELIVERED:
             return existing

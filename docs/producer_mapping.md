@@ -30,7 +30,7 @@ derived server-side.
 | Sentiment field | Value |
 |---|---|
 | `source` | `QUANT_REDDIT_SENTIMENT_SOURCE` (`reddit-wsb-v1`) |
-| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}` |
+| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}:{model}:{prompt_version}` |
 | `subject_type` | `ticker` |
 | `subject` | Extracted ticker |
 | `sentiment_score` | LLM score on `[-100, 100]` |
@@ -38,7 +38,7 @@ derived server-side.
 | `source_weight` | `QUANT_REDDIT_SOURCE_WEIGHT` producer reliability weight `[0,1]` |
 | `reason` | LLM rationale (≤ 2000) |
 | `observed_at` | Reddit item `created_utc` (ISO-8601) |
-| `tags` | `["wallstreetbets","reddit"]` |
+| `tags` | `["reddit","<subreddit>"]` |
 | `metadata` | `{reddit_fullname, permalink, model, prompt_version}` |
 
 `quant_sentiment` returns `201` (accepted) / `200` (duplicate); both are recorded.

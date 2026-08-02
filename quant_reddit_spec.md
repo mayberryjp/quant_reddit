@@ -166,7 +166,7 @@ code: `201` = accepted, `200` = duplicate; any other response is failed.
 | Sentiment field | Value from `quant_reddit` |
 |---|---|
 | `source` | `QUANT_REDDIT_SENTIMENT_SOURCE` (`reddit-wsb-v1`) |
-| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}` (one observation per ticker per source item) |
+| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}:{model}:{prompt_version}` (version-scoped parity with `quant_cnbc`) |
 | `subject_type` | `ticker` |
 | `subject` | Extracted ticker |
 | `sentiment_score` | LLM score on **[-100, 100]** (do **not** send `sentiment_label` — it is derived server-side) |
@@ -174,7 +174,7 @@ code: `201` = accepted, `200` = duplicate; any other response is failed.
 | `source_weight` | Configurable producer reliability weight `[0,1]` |
 | `reason` | LLM rationale (≤ 2000) |
 | `observed_at` | Reddit item `created_utc` (ISO-8601) |
-| `tags` | `["wallstreetbets","reddit"]` |
+| `tags` | `["reddit","<subreddit>"]` |
 | `metadata` | `{reddit_fullname, permalink, model, prompt_version}` |
 
 Handle `201` accepted / `200` duplicate; record in `emission_log`.

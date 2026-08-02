@@ -53,7 +53,7 @@ class TestRequestMapping:
 
         sent = json.loads(body.content)
         assert sent["source"] == SOURCE
-        assert sent["idempotency_key"] == f"{SOURCE}:t3_abc:GME"
+        assert sent["idempotency_key"] == f"{SOURCE}:t3_abc:GME:{MODEL}:{PROMPT}"
         assert sent["subject_type"] == "ticker"
         assert sent["subject"] == "GME"
         assert sent["sentiment_score"] == 80.0
@@ -73,7 +73,7 @@ class TestRequestMapping:
         assert route.called
 
     def test_idempotency_key_format(self):
-        assert sentiment_idempotency_key(SOURCE, "t3_abc", "GME") == f"{SOURCE}:t3_abc:GME"
+        assert sentiment_idempotency_key(SOURCE, "t3_abc", "GME", MODEL, PROMPT) == f"{SOURCE}:t3_abc:GME:{MODEL}:{PROMPT}"
 
 
 class TestOutcomes:
@@ -87,7 +87,7 @@ class TestOutcomes:
         assert rec.status is EmissionStatus.accepted
         assert rec.http_status == 201
         assert rec.response_id == "obs-1"
-        stored = repo.get_emission(EmissionTarget.sentiment, f"{SOURCE}:t3_a:GME")
+        stored = repo.get_emission(EmissionTarget.sentiment, f"{SOURCE}:t3_a:GME:{MODEL}:{PROMPT}")
         assert stored.status is EmissionStatus.accepted
 
     @respx.mock
@@ -131,7 +131,7 @@ class TestOutcomes:
     @respx.mock
     def test_skip_if_already_delivered(self, repo, make_item):
         item = make_item(fullname="t3_f")
-        key = f"{SOURCE}:t3_f:GME"
+        key = f"{SOURCE}:t3_f:GME:{MODEL}:{PROMPT}"
         repo.record_emission(
             target=EmissionTarget.sentiment,
             idempotency_key=key,
