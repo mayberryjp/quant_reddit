@@ -49,7 +49,8 @@ class Settings(BaseSettings):
     )
 
     # --- Reddit ingestion (QUANT_REDDIT_ prefix) -------------------------
-    subreddit: str = "wallstreetbets"
+    # Comma-separated list: QUANT_REDDIT_SUBREDDITS=wallstreetbets,stocks,investing
+    subreddits: list[str] = ["wallstreetbets"]
     post_batch: int = 50
     comments_per_post: int = 50
     poll_interval: int = 300

@@ -42,7 +42,7 @@ _MAX_CONTENT_CHARS = 6000
 _TICKER_RE = re.compile(r"[A-Z][A-Z.\-]{0,5}")
 
 SYSTEM_PROMPT = """\
-You are a financial text analyzer for r/wallstreetbets posts and comments.
+You are a financial text analyzer for Reddit posts and comments.
 Your job is to identify US-listed stock tickers explicitly mentioned in the
 provided content and estimate the author's sentiment toward each.
 

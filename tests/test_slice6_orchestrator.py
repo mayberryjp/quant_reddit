@@ -104,7 +104,7 @@ class TestFullCycle:
             llm_client=llm,
             sentiment_emitter=se,
             signal_emitter=sig,
-            subreddit="wallstreetbets",
+            subreddits=["wallstreetbets"],
             day=DAY,
         )
         assert r1.ingest.posts_new == 4
@@ -127,7 +127,7 @@ class TestFullCycle:
             llm_client=llm,
             sentiment_emitter=se,
             signal_emitter=sig,
-            subreddit="wallstreetbets",
+            subreddits=["wallstreetbets"],
             day=DAY,
         )
         assert r2.ingest.posts_new == 0
@@ -159,7 +159,7 @@ class TestFullCycle:
             llm_client=FakeLLM(GME_FINDINGS),
             sentiment_emitter=se,
             signal_emitter=sig,
-            subreddit="wallstreetbets",
+            subreddits=["wallstreetbets"],
             day=DAY,
         )
         assert r.sentiment_emitted == 2
@@ -185,7 +185,7 @@ class TestRunForever:
             sentiment_emitter=se,
             signal_emitter=sig,
             run_once=True,
-            subreddit="wallstreetbets",
+            subreddits=["wallstreetbets"],
             day=DAY,
         )
         assert repo.stats()["items_ingested"] == 3

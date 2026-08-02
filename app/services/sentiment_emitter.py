@@ -23,8 +23,6 @@ from app.services.http import post_json, response_json
 
 log = logging.getLogger("quant_reddit.sentiment_emitter")
 
-TAGS = ["wallstreetbets", "reddit"]
-
 # Emission outcomes that mean the observation was already delivered; re-emitting
 # is skipped so re-runs are idempotent no-ops.
 _DELIVERED = (EmissionStatus.accepted, EmissionStatus.duplicate)
@@ -53,7 +51,7 @@ def build_sentiment_request(
         "source_weight": source_weight,
         "reason": (finding.rationale or "")[: settings.max_reason_length],
         "observed_at": item.created_utc.isoformat(),
-        "tags": list(TAGS),
+        "tags": ["reddit", item.subreddit],
         "metadata": {
             "reddit_fullname": item.fullname,
             "permalink": item.permalink,

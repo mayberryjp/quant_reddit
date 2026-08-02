@@ -225,7 +225,7 @@ def ingest_once(
     A failure ingesting one post/comment never aborts the batch — errors are
     counted and the remaining items proceed (graceful degradation).
     """
-    subreddit = subreddit or settings.subreddit
+    subreddit = subreddit or settings.subreddits[0]
     post_batch = post_batch or settings.post_batch
     comments_per_post = comments_per_post or settings.comments_per_post
     cursor_key = cursor_key or f"{subreddit}:new"

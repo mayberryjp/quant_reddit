@@ -31,7 +31,7 @@ from app.timeutil import utcnow
 
 log = logging.getLogger("quant_reddit.signal_emitter")
 
-TAGS = ["wallstreetbets", "reddit", "llm"]
+TAGS = ["reddit", "llm"]
 
 _DELIVERED = (EmissionStatus.accepted, EmissionStatus.duplicate, EmissionStatus.unresolved)
 _STATUS_MAP = {
@@ -133,7 +133,7 @@ def build_signal_request(
     prompt_version: str,
     window: str,
 ) -> dict:
-    reason = f"{agg.mention_count} r/wallstreetbets mention(s); avg sentiment {agg.avg_sentiment:.0f}"
+    reason = f"{agg.mention_count} reddit mention(s); avg sentiment {agg.avg_sentiment:.0f}"
     if agg.top_rationale:
         reason = f"{reason}. {agg.top_rationale}"
     return {

@@ -64,7 +64,7 @@ def run_cycle(
     llm_client: LlmClient,
     sentiment_emitter: SentimentEmitter,
     signal_emitter: SignalEmitter,
-    subreddit: str | None = None,
+    subreddits: list[str] | None = None,
     post_batch: int | None = None,
     comments_per_post: int | None = None,
     distill_limit: int = _DEFAULT_DISTILL_LIMIT,
@@ -77,14 +77,23 @@ def run_cycle(
     day = day or utcnow().date()
     window = day.isoformat()
 
-    ingest_res = ingest_once(
-        repo,
-        reddit_source,
-        subreddit=subreddit,
-        post_batch=post_batch,
-        comments_per_post=comments_per_post,
-    )
-    result = CycleResult(ingest=ingest_res)
+    active_subreddits = subreddits or settings.subreddits
+    merged_ingest = IngestResult()
+    for sub in active_subreddits:
+        sub_result = ingest_once(
+            repo,
+            reddit_source,
+            subreddit=sub,
+            post_batch=post_batch,
+            comments_per_post=comments_per_post,
+        )
+        merged_ingest.posts_new += sub_result.posts_new
+        merged_ingest.posts_duplicate += sub_result.posts_duplicate
+        merged_ingest.comments_new += sub_result.comments_new
+        merged_ingest.comments_duplicate += sub_result.comments_duplicate
+        merged_ingest.posts_with_comments += sub_result.posts_with_comments
+        merged_ingest.errors += sub_result.errors
+    result = CycleResult(ingest=merged_ingest)
 
     new_items = repo.list_items_by_state(ProcessState.new, limit=distill_limit)
     pairs: list[tuple[str, object]] = []
