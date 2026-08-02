@@ -77,8 +77,6 @@ def _emitters(repo):
         repo,
         base_url=SIGNALS_BASE,
         source="reddit-wsb-v1",
-        min_mentions=3,
-        watchlist_min_score=0.5,
         retries=1,
         backoff=0,
     )
@@ -92,7 +90,7 @@ class TestFullCycle:
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
         respx.post(f"{SIGNALS_BASE}/signals").mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "signal_cache_id": "sig"})
+            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
         source = FakeSource(posts=[_post(f"p{i}") for i in range(4)])
         llm = FakeLLM(GME_FINDINGS)
@@ -111,11 +109,11 @@ class TestFullCycle:
         assert r1.items_distilled == 4
         assert r1.findings == 4
         assert r1.sentiment_emitted == 4
-        assert r1.signals_emitted == 1
+        assert r1.signals_emitted == 4
 
         stats = repo.stats()
         assert stats["emissions"]["sentiment"]["accepted"] == 4
-        assert stats["emissions"]["signals"]["accepted"] == 1
+        assert stats["emissions"]["signals"]["accepted"] == 4
         assert stats["items_by_state"]["distilled"] == 4
         assert repo.get_cursor(HEARTBEAT_KEY) is not None
 
@@ -140,17 +138,17 @@ class TestFullCycle:
 
         stats2 = repo.stats()
         assert stats2["emissions"]["sentiment"]["accepted"] == 4  # unchanged
-        assert stats2["emissions"]["signals"]["accepted"] == 1  # unchanged
+        assert stats2["emissions"]["signals"]["accepted"] == 4  # unchanged
 
     @respx.mock
-    def test_below_threshold_no_signal(self, repo):
+    def test_per_finding_emits_without_threshold_gating(self, repo):
         respx.post(f"{SENTIMENT_BASE}/sentiment").mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
         signals_route = respx.post(f"{SIGNALS_BASE}/signals").mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "signal_cache_id": "sig"})
+            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
-        # Only 2 mentions -> below min_mentions=3: sentiment still emitted, no signal.
+        # Two mentions still yield two signal submissions under per-finding parity.
         source = FakeSource(posts=[_post(f"p{i}") for i in range(2)])
         se, sig = _emitters(repo)
         r = run_cycle(
@@ -163,8 +161,8 @@ class TestFullCycle:
             day=DAY,
         )
         assert r.sentiment_emitted == 2
-        assert r.signals_emitted == 0
-        assert signals_route.called is False
+        assert r.signals_emitted == 2
+        assert signals_route.call_count == 2
 
 
 class TestRunForever:
@@ -174,7 +172,7 @@ class TestRunForever:
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
         respx.post(f"{SIGNALS_BASE}/signals").mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "signal_cache_id": "sig"})
+            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
         source = FakeSource(posts=[_post(f"p{i}") for i in range(3)])
         se, sig = _emitters(repo)

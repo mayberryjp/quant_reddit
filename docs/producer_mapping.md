@@ -3,27 +3,24 @@
 How `quant_reddit` maps distilled findings onto the two downstream contracts. It
 records every attempt in `emission_log` and is idempotent per key.
 
-## → `quant_signals` `POST /signals` (watchlist candidate)
+## → `quant_signals` `POST /signals` (strict parity mode)
 
-Emitted per ticker per day, only when
-`mention_count ≥ QUANT_REDDIT_MIN_MENTIONS` **and**
-`score ≥ QUANT_REDDIT_WATCHLIST_MIN_SCORE`.
+Emitted once per resolved finding (per item+ticker), with version-scoped
+idempotency parity.
 
 | Signal field | Value |
 |---|---|
 | `source` | `QUANT_REDDIT_SIGNAL_SOURCE` (`reddit-wsb-v1`) |
-| `idempotency_key` | `{source}:{yyyy-mm-dd}:{TICKER}` (one candidate per ticker per day) |
+| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}:{model}:{prompt_version}` |
 | `ticker` | Extracted ticker (uppercased) |
-| `signal_type` | `watchlist_candidate` |
-| `direction` | `long`/`short`/`neutral` from aggregate sentiment vs neutral band |
-| `score` | Normalized conviction `[0,1]` = f(mention volume, `|sentiment|/100`, confidence) |
-| `confidence` | Mean LLM confidence `[0,1]` |
-| `reason` | Mention summary + top rationale (≤ 2000) |
-| `tags` | `["wallstreetbets","reddit","llm"]` |
-| `metadata` | `{reddit_fullnames, mention_count, model, prompt_version, window}` |
+| `signal_type` | `cnbc_mention` (default; configurable) |
+| `direction` | `long`/`short`/`neutral` from the finding |
+| `confidence` | LLM confidence `[0,1]` |
+| `reason` | Finding rationale (≤ 2000) |
+| `tags` | `["reddit","llm"]` |
+| `metadata` | `{reddit_fullname, model, prompt_version, window}` |
 
-`quant_signals` always responds `201`; the outcome is in the body
-(`status` ∈ `accepted` / `duplicate` / `unresolved`) and is recorded accordingly.
+Status classification is HTTP-based: `201` accepted, `200` duplicate, otherwise failed.
 
 ## → `quant_sentiment` `POST /sentiment`
 

@@ -51,7 +51,7 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — Reddit OAuth (script app).
 - `OLLAMA_BASE_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3.1`).
 - `QUANT_SIGNALS_URL` (default `http://localhost:8016`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017`).
-- `QUANT_REDDIT_*` — tuning knobs (poll interval, batch sizes, thresholds, pagination).
+- `QUANT_REDDIT_*` — tuning knobs (poll interval, batch sizes, signal type, pagination).
   See [.env.example](.env.example).
 
 ## Documentation

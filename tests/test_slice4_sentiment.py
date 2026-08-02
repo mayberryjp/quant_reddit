@@ -61,7 +61,7 @@ class TestRequestMapping:
         assert sent["source_weight"] == 0.5
         assert sent["reason"] == "short squeeze"
         assert sent["observed_at"] == item.created_utc.isoformat()
-        assert sent["tags"] == ["wallstreetbets", "reddit"]
+        assert sent["tags"] == ["reddit", "wallstreetbets"]
         assert sent["metadata"] == {
             "reddit_fullname": "t3_abc",
             "permalink": "https://reddit.com/x",

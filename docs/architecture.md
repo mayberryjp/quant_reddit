@@ -35,7 +35,7 @@ flowchart LR
 | `app/services/ollama_client.py` | httpx client for `POST {OLLAMA_BASE_URL}/api/chat` (`format: json`) |
 | `app/services/distiller.py` | versioned, prompt-injection-safe distillation → validated `TickerFinding`s |
 | `app/services/sentiment_emitter.py` | one observation per (item, ticker) → `quant_sentiment` |
-| `app/services/signal_emitter.py` | per-window aggregation + thresholds → watchlist candidates to `quant_signals` |
+| `app/services/signal_emitter.py` | per-finding watchlist submission with version-scoped idempotency parity to `quant_signals` |
 | `app/services/orchestrator.py` | ties the cycle together; `run_forever` with graceful shutdown |
 | `app/repository/` | SQLAlchemy Core schema + repository (dedup, state, emissions, cursor, stats) |
 | `app/routes/` | `health.py` (health/ready/stats), `reddit.py` (recent read endpoints) |

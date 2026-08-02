@@ -15,7 +15,7 @@ curl http://localhost:8018/reddit/ready
 ```bash
 curl http://localhost:8018/reddit/stats
 # items_ingested, items_by_state, extractions, emissions
-# (signals/sentiment × accepted/duplicate/unresolved/failed),
+# (signals/sentiment × accepted/duplicate/failed),
 # last_fetched_at, last_run (worker heartbeat)
 ```
 
@@ -72,9 +72,9 @@ pytest -v          # in-memory SQLite; no Docker/Postgres/Ollama/Reddit required
   `DATABASE_URL` and the DB container.
 - Read endpoint `422` → invalid filter value or non-integer `page`/`page_size`; the
   `detail` explains which.
-- No signals emitted → tickers below `QUANT_REDDIT_MIN_MENTIONS` or conviction below
-  `QUANT_REDDIT_WATCHLIST_MIN_SCORE`; check `/reddit/stats` and
-  `/reddit/emissions/recent`.
+- No signals emitted → no distilled ticker findings were produced for new items,
+  or downstream `/signals` calls are failing; check `/reddit/stats`,
+  `/reddit/extractions/recent`, and `/reddit/emissions/recent`.
 
 ## Known limitations (v1)
 

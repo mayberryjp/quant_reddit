@@ -61,13 +61,10 @@ class Settings(BaseSettings):
 
     # --- Emission sources / tuning ---------------------------------------
     signal_source: str = "reddit-wsb-v1"
+    watchlist_signal_type: str = "cnbc_mention"
     sentiment_source: str = "reddit-wsb-v1"
     # Producer reliability weight [0,1] sent on each sentiment observation.
     source_weight: float = 0.5
-    min_mentions: int = 3
-    watchlist_min_score: float = 0.5
-    # A score whose absolute value is <= neutral_band derives to "neutral".
-    neutral_band: float = 20.0
 
     # --- Score bounds ----------------------------------------------------
     score_min: float = -100.0

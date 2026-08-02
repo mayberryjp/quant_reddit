@@ -120,9 +120,6 @@ These are mandatory and mirror `quant_sentiment` / `quant_daily_bars`:
 | `QUANT_REDDIT_POLL_INTERVAL` | `300` | Worker loop interval (seconds). |
 | `QUANT_REDDIT_POST_BATCH` | `50` | Max posts fetched per cycle. |
 | `QUANT_REDDIT_COMMENTS_PER_POST` | `50` | Max top-level comments distilled per post. |
-| `QUANT_REDDIT_MIN_MENTIONS` | `3` | Min per-window ticker mentions to emit a watchlist signal. |
-| `QUANT_REDDIT_WATCHLIST_MIN_SCORE` | `0.5` | Min normalized conviction to emit a watchlist signal. |
-| `QUANT_REDDIT_NEUTRAL_BAND` | `20` | Mirrors sentiment neutral band for direction derivation. |
 | `QUANT_REDDIT_HTTP_TIMEOUT` | `30` | Downstream/Ollama request timeout (seconds). |
 | `QUANT_REDDIT_HTTP_RETRIES` | `3` | Retry attempts for downstream/Ollama calls. |
 | `QUANT_REDDIT_DEFAULT_PAGE_SIZE` / `QUANT_REDDIT_MAX_PAGE_SIZE` | `25` / `100` | Read pagination. |
@@ -147,24 +144,22 @@ SQLite parity via `schema_translate_map` for tests, exactly as `quant_sentiment`
 
 ## Downstream field mapping
 
-### → `quant_signals` `POST /signals` (watchlist candidate)
+### → `quant_signals` `POST /signals` (strict parity mode)
 
 | Signal field | Value from `quant_reddit` |
 |---|---|
 | `source` | `QUANT_REDDIT_SIGNAL_SOURCE` (`reddit-wsb-v1`) |
-| `idempotency_key` | `{source}:{yyyy-mm-dd}:{TICKER}` (one watchlist candidate per ticker per day; re-runs upsert) |
+| `idempotency_key` | `{source}:{reddit_fullname}:{TICKER}:{model}:{prompt_version}` (version-scoped; same as `quant_cnbc` idempotency semantics) |
 | `ticker` | Extracted ticker (uppercased) |
 | `reason` | LLM rationale, truncated to 2000 chars |
-| `signal_type` | `watchlist_candidate` |
-| `direction` | `long`/`short`/`neutral` from LLM/`sign(sentiment_score)` vs neutral band |
-| `score` | Normalized conviction `[0,1]` = f(mention volume, `|sentiment_score|/100`, confidence) |
+| `signal_type` | `cnbc_mention` (configurable; default set for parity) |
+| `direction` | `long`/`short`/`neutral` from the validated finding |
 | `confidence` | LLM confidence `[0,1]` |
-| `tags` | `["wallstreetbets","reddit","llm"]` |
-| `metadata` | `{reddit_fullnames, mention_count, model, prompt_version, window}` |
+| `tags` | `["reddit","llm"]` |
+| `metadata` | `{reddit_fullname, model, prompt_version, window}` |
 
-Emit only when `mention_count ≥ QUANT_REDDIT_MIN_MENTIONS` **and**
-`score ≥ QUANT_REDDIT_WATCHLIST_MIN_SCORE`. Handle response states `accepted` /
-`duplicate` / `unresolved`; record all in `emission_log`.
+Emit one signal per resolved finding (no threshold gating). Classify status by HTTP
+code: `201` = accepted, `200` = duplicate; any other response is failed.
 
 ### → `quant_sentiment` `POST /sentiment`
 
@@ -236,16 +231,18 @@ Each slice is independently shippable, has its own `test_slice<N>_*.py` suite, a
   duplicate handling (`200`), and `emission_log` rows for success + failure.
 
 ### Slice 5 — Signal emission → `quant_signals`
-- `signal_emitter.py` aggregates per-ticker findings over the window, applies
-  `MIN_MENTIONS` / `WATCHLIST_MIN_SCORE` thresholds, maps to `POST /signals`, handles
-  `accepted`/`duplicate`/`unresolved`, records `emission_log`.
-- **Acceptance:** mocked-HTTP tests cover threshold gating, request-body mapping,
-  `unresolved` handling, and daily idempotency-key upsert semantics.
+- `signal_emitter.py` emits one `POST /signals` per resolved finding, uses
+  version-scoped idempotency
+  `{source}:{reddit_fullname}:{ticker}:{model}:{prompt_version}`, classifies
+  `201` as accepted and `200` as duplicate, and records every attempt in
+  `emission_log`.
+- **Acceptance:** mocked-HTTP tests cover request mapping, HTTP-based status
+  classification, idempotency skip on rerun, and per-finding fan-out.
 
 ### Slice 6 — Orchestration worker + scheduling
 - `orchestrator.py` ties `ingest → distill → emit` into the supervisord `[program:worker]`
-  loop with `POLL_INTERVAL`; per-window ticker aggregation (weighted by confidence);
-  watermark advancement; idempotent re-runs; maintenance heartbeat; graceful shutdown.
+  loop with `POLL_INTERVAL`; per-finding watchlist fan-out; watermark advancement;
+  idempotent re-runs; maintenance heartbeat; graceful shutdown.
 - **Acceptance:** end-to-end test with all externals stubbed drives one full cycle and
   asserts the expected `emission_log` outcome; re-run produces only duplicates.
 
