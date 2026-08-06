@@ -32,8 +32,9 @@ playwright install chromium
 ingest (Reddit) → distill (Ollama) → emit (signals + sentiment)
 ```
 
-A supervisord-managed worker runs the `ingest → distill → emit` pipeline on a poll
-interval; a sibling Bottle API process serves health/readiness/stats and read endpoints.
+A supervisord-managed ingest worker fetches Reddit content and a separate process worker
+handles `distill → emit` from queued `new` items; a sibling Bottle API process serves
+health/readiness/stats and read endpoints.
 PostgreSQL holds an append-mostly audit + idempotency ledger.
 
 ## API Endpoints
@@ -56,9 +57,9 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
   - `praw`: forces OAuth/PRAW and requires `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`.
   - `scrape`: forces browser-backed scraping (Playwright Chromium).
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — used by PRAW mode; user-agent is always sent and should be descriptive.
-- `OLLAMA_BASE_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3.1`).
+- `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`), `OLLAMA_MODEL` (default `llama3.1`).
 - `QUANT_SIGNALS_URL` (default `http://localhost:8016`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017`).
-- `QUANT_REDDIT_*` — tuning knobs (poll interval, batch sizes, signal type, pagination).
+- `QUANT_REDDIT_*` — tuning knobs (ingest/process interval, batch sizes, signal type, pagination).
   See [.env.example](.env.example).
 
 ## Documentation

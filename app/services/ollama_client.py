@@ -1,8 +1,9 @@
-"""HTTP client for a local Ollama instance.
+"""HTTP client for an OpenAI-compatible local LLM endpoint.
 
-Talks to ``POST {OLLAMA_BASE_URL}/api/chat`` with ``format: "json"`` so the model
-is constrained to emit valid JSON. The client returns the assistant message
-content (a JSON *string*); parsing/validation is the distiller's job.
+Talks to ``POST {OLLAMA_BASE_URL}/chat/completions`` with
+``response_format={"type": "json_object"}`` so the model is constrained to emit
+valid JSON. The client returns the assistant message content (a JSON *string*);
+parsing/validation is the distiller's job.
 """
 
 from __future__ import annotations
@@ -46,13 +47,13 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "stream": False,
-            "format": "json",
+            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         }
-        url = f"{self.base_url}/api/chat"
+        url = f"{self.base_url}/chat/completions"
         attempts = max(1, self.retries)
         last_exc: Exception | None = None
         for attempt in range(attempts):
@@ -61,7 +62,10 @@ class OllamaClient:
                     resp = client.post(url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                return (data.get("message") or {}).get("content", "") or ""
+                choices = data.get("choices") or []
+                if not choices:
+                    return ""
+                return ((choices[0].get("message") or {}).get("content", "") or "")
             except httpx.HTTPError as exc:
                 last_exc = exc
                 if attempt + 1 < attempts:

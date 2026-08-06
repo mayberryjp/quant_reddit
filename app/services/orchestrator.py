@@ -57,26 +57,27 @@ class CycleResult:
         return data
 
 
-def run_cycle(
+@dataclass
+class ProcessResult:
+    items_distilled: int = 0
+    items_failed: int = 0
+    findings: int = 0
+    sentiment_emitted: int = 0
+    signals_emitted: int = 0
+
+    def as_dict(self) -> dict:
+        return self.__dict__.copy()
+
+
+def run_ingest_cycle(
     repo: RedditRepository,
     *,
     reddit_source: RedditSource,
-    llm_client: LlmClient,
-    sentiment_emitter: SentimentEmitter,
-    signal_emitter: SignalEmitter,
     subreddits: list[str] | None = None,
     post_batch: int | None = None,
     comments_per_post: int | None = None,
-    distill_limit: int = _DEFAULT_DISTILL_LIMIT,
-    model: str | None = None,
-    prompt_version: str = PROMPT_VERSION,
-    day: date | None = None,
-) -> CycleResult:
-    """Run one full ``ingest → distill → emit`` cycle. Idempotent on re-run."""
-    model = model or settings.ollama_model
-    day = day or utcnow().date()
-    window = day.isoformat()
-
+) -> IngestResult:
+    """Run one ingest-only cycle across configured subreddits."""
     active_subreddits = subreddits or settings.subreddits
     merged_ingest = IngestResult()
     for sub in active_subreddits:
@@ -93,8 +94,26 @@ def run_cycle(
         merged_ingest.comments_duplicate += sub_result.comments_duplicate
         merged_ingest.posts_with_comments += sub_result.posts_with_comments
         merged_ingest.errors += sub_result.errors
-    result = CycleResult(ingest=merged_ingest)
+    return merged_ingest
 
+
+def run_process_cycle(
+    repo: RedditRepository,
+    *,
+    llm_client: LlmClient,
+    sentiment_emitter: SentimentEmitter,
+    signal_emitter: SignalEmitter,
+    distill_limit: int = _DEFAULT_DISTILL_LIMIT,
+    model: str | None = None,
+    prompt_version: str = PROMPT_VERSION,
+    day: date | None = None,
+) -> ProcessResult:
+    """Run one process-only cycle over items currently in ``new`` state."""
+    model = model or settings.ollama_model
+    day = day or utcnow().date()
+    window = day.isoformat()
+
+    result = ProcessResult()
     new_items = repo.list_items_by_state(ProcessState.new, limit=distill_limit)
     pairs: list[tuple[str, object]] = []
 
@@ -126,9 +145,136 @@ def run_cycle(
         pairs, model=model, prompt_version=prompt_version, window=window, day=day
     )
     result.signals_emitted = len(emitted_signals)
+    return result
+
+
+def run_cycle(
+    repo: RedditRepository,
+    *,
+    reddit_source: RedditSource,
+    llm_client: LlmClient,
+    sentiment_emitter: SentimentEmitter,
+    signal_emitter: SignalEmitter,
+    subreddits: list[str] | None = None,
+    post_batch: int | None = None,
+    comments_per_post: int | None = None,
+    distill_limit: int = _DEFAULT_DISTILL_LIMIT,
+    model: str | None = None,
+    prompt_version: str = PROMPT_VERSION,
+    day: date | None = None,
+) -> CycleResult:
+    """Run one full ``ingest → distill → emit`` cycle. Idempotent on re-run."""
+    ingest_result = run_ingest_cycle(
+        repo,
+        reddit_source=reddit_source,
+        subreddits=subreddits,
+        post_batch=post_batch,
+        comments_per_post=comments_per_post,
+    )
+    process_result = run_process_cycle(
+        repo,
+        llm_client=llm_client,
+        sentiment_emitter=sentiment_emitter,
+        signal_emitter=signal_emitter,
+        distill_limit=distill_limit,
+        model=model,
+        prompt_version=prompt_version,
+        day=day,
+    )
+
+    result = CycleResult(ingest=ingest_result)
+    result.items_distilled = process_result.items_distilled
+    result.items_failed = process_result.items_failed
+    result.findings = process_result.findings
+    result.sentiment_emitted = process_result.sentiment_emitted
+    result.signals_emitted = process_result.signals_emitted
 
     repo.set_heartbeat()
     return result
+
+
+def _install_stop_handlers(stop: threading.Event) -> None:
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+    except (ValueError, OSError):
+        # Signal handlers can only be installed in the main thread.
+        pass
+
+
+def run_ingest_forever(
+    repo: RedditRepository,
+    *,
+    reddit_source: RedditSource,
+    poll_interval: int | None = None,
+    run_once: bool = False,
+    **ingest_kwargs,
+) -> None:
+    """Run ingest-only cycles until stopped."""
+    poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
+    stop = threading.Event()
+
+    if not run_once:
+        _install_stop_handlers(stop)
+
+    log.info("ingest worker starting (poll interval %ss)", poll_interval)
+    while True:
+        try:
+            ingest_result = run_ingest_cycle(
+                repo,
+                reddit_source=reddit_source,
+                **ingest_kwargs,
+            )
+            log.info("ingest cycle complete: %s", ingest_result.as_dict())
+        except Exception:  # noqa: BLE001
+            log.exception("ingest cycle failed")
+
+        if run_once or stop.is_set():
+            break
+        if stop.wait(timeout=poll_interval):
+            break
+
+    log.info("ingest worker stopped")
+
+
+def run_process_forever(
+    repo: RedditRepository,
+    *,
+    llm_client: LlmClient,
+    sentiment_emitter: SentimentEmitter,
+    signal_emitter: SignalEmitter,
+    poll_interval: int | None = None,
+    run_once: bool = False,
+    **process_kwargs,
+) -> None:
+    """Run process-only cycles until stopped."""
+    poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
+    stop = threading.Event()
+
+    if not run_once:
+        _install_stop_handlers(stop)
+
+    log.info("process worker starting (poll interval %ss)", poll_interval)
+    while True:
+        try:
+            process_result = run_process_cycle(
+                repo,
+                llm_client=llm_client,
+                sentiment_emitter=sentiment_emitter,
+                signal_emitter=signal_emitter,
+                **process_kwargs,
+            )
+            log.info("process cycle complete: %s", process_result.as_dict())
+            repo.set_heartbeat()
+        except Exception:  # noqa: BLE001
+            log.exception("process cycle failed")
+
+        if run_once or stop.is_set():
+            break
+        if stop.wait(timeout=poll_interval):
+            break
+
+    log.info("process worker stopped")
 
 
 def run_forever(
@@ -147,12 +293,7 @@ def run_forever(
     stop = threading.Event()
 
     if not run_once:
-        try:
-            signal.signal(signal.SIGTERM, lambda *_: stop.set())
-            signal.signal(signal.SIGINT, lambda *_: stop.set())
-        except (ValueError, OSError):
-            # Signal handlers can only be installed in the main thread.
-            pass
+        _install_stop_handlers(stop)
 
     log.info("orchestrator starting (poll interval %ss)", poll_interval)
     while True:

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # --- Ollama (read unprefixed) ----------------------------------------
     ollama_base_url: str = Field(
-        default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL"
+        default="http://localhost:11434/v1", validation_alias="OLLAMA_BASE_URL"
     )
     ollama_model: str = Field(default="llama3.1", validation_alias="OLLAMA_MODEL")
 
@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     post_batch: int = 50
     comments_per_post: int = 50
     poll_interval: int = 300
+    ingest_interval: int = 300
+    process_interval: int = 300
     # Selective comment fetching (owner guidance): only pull a post's comments
     # when it looks high-signal, to stay under Reddit's ~100 req/min budget.
     comment_min_score: int = 50

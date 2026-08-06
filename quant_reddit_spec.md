@@ -110,14 +110,15 @@ These are mandatory and mirror `quant_sentiment` / `quant_daily_bars`:
 | `REDDIT_CLIENT_SECRET` | — (required) | Reddit OAuth app secret. |
 | `REDDIT_USER_AGENT` | `quant_reddit/0.1 by <user>` | Reddit-required UA string. |
 | `REDDIT_USERNAME` / `REDDIT_PASSWORD` | optional | For script-app auth if used. |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible LLM base URL. |
 | `OLLAMA_MODEL` | `llama3.1` | Model tag used for distillation. |
 | `QUANT_SIGNALS_URL` | `http://localhost:8016` | Base URL of `quant_signals`. |
 | `QUANT_SENTIMENT_URL` | `http://localhost:8017` | Base URL of `quant_sentiment`. |
-| `QUANT_REDDIT_SUBREDDIT` | `wallstreetbets` | Subreddit to read. |
+| `QUANT_REDDIT_SUBREDDITS` | `wallstreetbets,stocks,investing` | Comma-separated subreddit list to read. |
 | `QUANT_REDDIT_SIGNAL_SOURCE` | `reddit-wsb-v1` | `source` used for `POST /signals`. |
 | `QUANT_REDDIT_SENTIMENT_SOURCE` | `reddit-wsb-v1` | `source` used for `POST /sentiment`. |
-| `QUANT_REDDIT_POLL_INTERVAL` | `300` | Worker loop interval (seconds). |
+| `QUANT_REDDIT_INGEST_INTERVAL` | `300` | Ingest worker loop interval (seconds). |
+| `QUANT_REDDIT_PROCESS_INTERVAL` | `60` | Process worker loop interval (seconds). |
 | `QUANT_REDDIT_POST_BATCH` | `50` | Max posts fetched per cycle. |
 | `QUANT_REDDIT_COMMENTS_PER_POST` | `50` | Max top-level comments distilled per post. |
 | `QUANT_REDDIT_HTTP_TIMEOUT` | `30` | Downstream/Ollama request timeout (seconds). |
@@ -192,7 +193,7 @@ Each slice is independently shippable, has its own `test_slice<N>_*.py` suite, a
   `pydantic-settings`, `httpx`, `praw`; dev: `pytest`, `webtest`, `respx`/`responses`).
 - `app/config.py`, `app/db.py`, `app/main.py` (`create_app`, JSON error handlers, waitress
   entrypoint), `app/routes/health.py` with `/reddit/health`.
-- `Dockerfile`, `supervisord.conf` (`[program:api]` + `[program:worker]`),
+- `Dockerfile`, `supervisord.conf` (`[program:api]` + `[program:ingest_worker]` + `[program:process_worker]`),
   `docker-compose.yml` (service + postgres; optional `ollama` service), `.env.example`,
   Alembic env with `alembic_version_reddit`.
 - **Acceptance:** `docker compose up` builds and serves; `GET /reddit/health` → `{"status":"ok"}`; `pytest -v` green.
@@ -213,7 +214,8 @@ Each slice is independently shippable, has its own `test_slice<N>_*.py` suite, a
   idempotent on re-run (no duplicates), and advances the cursor.
 
 ### Slice 3 — Ollama distillation
-- `ollama_client.py` (httpx → `POST {OLLAMA_BASE_URL}/api/chat` with `format: json`) and
+- `ollama_client.py` (httpx → `POST {OLLAMA_BASE_URL}/chat/completions` with
+  `response_format: {"type": "json_object"}`) and
   `distiller.py` with a **versioned prompt** that returns a strict JSON array of
   `{ticker, sentiment_score(-100..100), direction, confidence, is_watchlist_candidate, rationale}`.
 - **Prompt-injection safe:** Reddit text is untrusted and is passed as clearly delimited
@@ -240,8 +242,9 @@ Each slice is independently shippable, has its own `test_slice<N>_*.py` suite, a
   classification, idempotency skip on rerun, and per-finding fan-out.
 
 ### Slice 6 — Orchestration worker + scheduling
-- `orchestrator.py` ties `ingest → distill → emit` into the supervisord `[program:worker]`
-  loop with `POLL_INTERVAL`; per-finding watchlist fan-out; watermark advancement;
+- `orchestrator.py` provides split loops: ingest worker (`INGEST_INTERVAL`) and
+  process worker (`PROCESS_INTERVAL`) plus a combined compatibility loop; includes
+  per-finding watchlist fan-out and watermark advancement;
   idempotent re-runs; maintenance heartbeat; graceful shutdown.
 - **Acceptance:** end-to-end test with all externals stubbed drives one full cycle and
   asserts the expected `emission_log` outcome; re-run produces only duplicates.

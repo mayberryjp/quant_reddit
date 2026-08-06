@@ -19,5 +19,5 @@ COPY . .
 
 EXPOSE 8018
 
-# Run migrations, then hand off to supervisord which manages the API + worker.
+# Run migrations, then hand off to supervisord which manages API + ingest/process workers.
 CMD ["/bin/sh", "-c", "alembic upgrade head && supervisord -c /app/supervisord.conf -n"]

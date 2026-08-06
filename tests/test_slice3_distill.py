@@ -168,10 +168,15 @@ class TestDistillItem:
 class TestOllamaClientHttp:
     @respx.mock
     def test_chat_posts_format_json_and_returns_content(self):
-        base = "http://ollama.test:11434"
-        route = respx.post(f"{base}/api/chat").mock(
+        base = "http://ollama.test:11434/v1"
+        route = respx.post(f"{base}/chat/completions").mock(
             return_value=httpx.Response(
-                200, json={"message": {"role": "assistant", "content": '{"findings": []}'}}
+                200,
+                json={
+                    "choices": [
+                        {"message": {"role": "assistant", "content": '{"findings": []}'}}
+                    ]
+                },
             )
         )
         client = OllamaClient(base_url=base, model="llama3.1", timeout=5, retries=1, backoff=0)
@@ -179,7 +184,7 @@ class TestOllamaClientHttp:
         assert content == '{"findings": []}'
         assert route.called
         body = json.loads(route.calls.last.request.content)
-        assert body["format"] == "json"
+        assert body["response_format"] == {"type": "json_object"}
         assert body["model"] == "llama3.1"
         assert body["stream"] is False
         assert body["messages"][0]["role"] == "system"
