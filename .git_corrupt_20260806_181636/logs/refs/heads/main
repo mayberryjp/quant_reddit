@@ -1,0 +1,7 @@
+0000000000000000000000000000000000000000 c39f79b7bea658d19d8d457f543516edc5b35073 mayberryjp <mayberryjp@gmail.com> 1785638520 +0900	reset: moving to origin/main
+c39f79b7bea658d19d8d457f543516edc5b35073 d7042b5438d5d87eca664f22211dc792f5eca4dd mayberryjp <mayberryjp@gmail.com> 1785638708 +0900	commit: multiple reddits
+d7042b5438d5d87eca664f22211dc792f5eca4dd 675cada9a2d22054a107cecba35c9d5ed239e2f6 mayberryjp <mayberryjp@gmail.com> 1785656866 +0900	commit: strict symbol extraction
+675cada9a2d22054a107cecba35c9d5ed239e2f6 d15016d568fceea1971d33154d10f39cc5d9741f mayberryjp <mayberryjp@gmail.com> 1785657381 +0900	commit: strict symbol extraction
+d15016d568fceea1971d33154d10f39cc5d9741f 64fc50a5cb88c42b2902e61fd28b20448aa79746 mayberryjp <mayberryjp@gmail.com> 1785661518 +0900	commit: strict symbol extraction
+64fc50a5cb88c42b2902e61fd28b20448aa79746 171f483517646e183a223afee400155106c77702 mayberryjp <mayberryjp@gmail.com> 1786007118 +0900	commit: rewrite
+171f483517646e183a223afee400155106c77702 394f55043db9a2216e41da213c5d77a51bd3df43 mayberryjp <mayberryjp@gmail.com> 1786007256 +0900	pull --tags origin main: Merge made by the 'ort' strategy.
