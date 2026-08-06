@@ -1,34 +1,42 @@
-name: Publish Docker image
+name: Build and publish Docker image
 
 on:
   push:
-    tags: ["v*"]
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quant-reddit-docker-publish
+  cancel-in-progress: true
 
 jobs:
-  publish:
+  build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          images: ghcr.io/${{ github.repository }}
-      - name: Build and push
-        uses: docker/build-push-action@v6
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
         with:
           context: .
+          file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: true
+          tags: |
+            mayberry4477/quant_reddit:latest
+            mayberry4477/quant_reddit:${{ github.sha }}
