@@ -56,7 +56,8 @@ class TestRequestMapping:
         assert sent["idempotency_key"] == f"{SOURCE}:t3_abc:GME:{MODEL}:{PROMPT}"
         assert sent["subject_type"] == "ticker"
         assert sent["subject"] == "GME"
-        assert sent["sentiment_score"] == 80.0
+        assert sent["sentiment_score"] == 0.8
+        assert sent["sentiment_label"] == "bullish"
         assert sent["confidence"] == 0.9
         assert sent["source_weight"] == 0.5
         assert sent["reason"] == "short squeeze"
@@ -67,9 +68,10 @@ class TestRequestMapping:
             "permalink": "https://reddit.com/x",
             "model": MODEL,
             "prompt_version": PROMPT,
+            "guest": None,
+            "company_name": None,
+            "raw_mention": None,
         }
-        # sentiment_label must never be sent (derived server-side)
-        assert "sentiment_label" not in sent
         assert route.called
 
     def test_idempotency_key_format(self):

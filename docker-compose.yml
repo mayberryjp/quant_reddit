@@ -26,6 +26,7 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
       QUANT_SIGNALS_URL: ${QUANT_SIGNALS_URL:-http://host.docker.internal:8016}
       QUANT_SENTIMENT_URL: ${QUANT_SENTIMENT_URL:-http://host.docker.internal:8017}
+      REDDIT_SOURCE_MODE: ${REDDIT_SOURCE_MODE:-scrape}
       REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
       REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
       REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-docker:quant_reddit:v0.1.0 (by /u/homelabids)}

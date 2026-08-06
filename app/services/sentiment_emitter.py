@@ -47,6 +47,16 @@ def build_sentiment_request(
     model: str,
     prompt_version: str,
 ) -> dict:
+    score = max(-1.0, min(1.0, float(finding.sentiment_score) / 100.0))
+    label = (finding.sentiment_label or "").lower().strip()
+    if label not in {"bullish", "bearish", "neutral"}:
+        if score > 0:
+            label = "bullish"
+        elif score < 0:
+            label = "bearish"
+        else:
+            label = "neutral"
+
     return {
         "source": source,
         "idempotency_key": sentiment_idempotency_key(
@@ -56,12 +66,14 @@ def build_sentiment_request(
             model,
             prompt_version,
         ),
-        "subject_type": "ticker",
+        "subject_type": finding.subject_type or "ticker",
         "subject": finding.ticker,
-        "sentiment_score": finding.sentiment_score,
+        "sentiment_label": label,
+        "sentiment_score": score,
         "confidence": finding.confidence,
+        "horizon": finding.horizon,
         "source_weight": source_weight,
-        "reason": (finding.rationale or "")[: settings.max_reason_length],
+        "reason": ((finding.context or finding.rationale) or "")[: settings.max_reason_length],
         "observed_at": item.created_utc.isoformat(),
         "tags": ["reddit", item.subreddit],
         "metadata": {
@@ -69,6 +81,9 @@ def build_sentiment_request(
             "permalink": item.permalink,
             "model": model,
             "prompt_version": prompt_version,
+            "guest": finding.speaker,
+            "company_name": finding.company_name,
+            "raw_mention": finding.raw_mention,
         },
     }
 

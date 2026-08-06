@@ -4,11 +4,11 @@ Reads new posts (and, selectively, their top-level comments) from a subreddit an
 persists them idempotently into the ``reddit_items`` ledger, advancing a per-source
 ``ingest_cursor``.
 
-Authentication uses an OAuth2 **script app** (password grant) via PRAW, as decided
-for the platform. Reddit's Data API allows ~100 queries/minute per OAuth client id
-(averaged over 10 minutes); to stay well under that we poll ``/new`` and only fetch
-comments for high-signal posts (high score / comment volume / ticker mentions), per
-the owner's guidance.
+Authentication can use either OAuth2 (via PRAW) or browser-backed scraping via
+Playwright, depending on ``REDDIT_SOURCE_MODE`` and available credentials. To
+stay well under practical rate limits we poll ``/new`` and only fetch comments
+for high-signal posts (high score / comment volume / ticker mentions), per the
+owner's guidance.
 
 The ingestion pipeline is written against a small :class:`RedditSource` protocol so
 tests can inject a fake source — no network is touched in tests.
@@ -17,9 +17,12 @@ tests can inject a fake source — no network is touched in tests.
 from __future__ import annotations
 
 import logging
+import html as html_module
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterable, Protocol
 
 from app.config import settings
@@ -70,7 +73,7 @@ class RedditSource(Protocol):
 
 
 # ----------------------------------------------------------------------------
-# PRAW-backed source (production)
+# Sources (production)
 # ----------------------------------------------------------------------------
 class PrawRedditSource:
     """A :class:`RedditSource` backed by PRAW using script-app (password) auth."""
@@ -134,6 +137,274 @@ class PrawRedditSource:
                 created_utc=float(c.created_utc),
                 parent_fullname=getattr(c, "parent_id", None),
             )
+
+
+class PlaywrightRedditSource:
+    """A :class:`RedditSource` backed by browser rendering with Playwright.
+
+    This path emulates a browser and extracts the same page data used by the
+    working local test script, avoiding the blocked reddit.com JSON endpoints.
+    """
+
+    def __init__(
+        self,
+        *,
+        profile_dir: str,
+        user_agent: str,
+        load_timeout_ms: int,
+        settle_ms: int,
+        scrolls: int,
+        post_delay_seconds: int,
+        comments_per_post: int,
+    ) -> None:
+        self._profile_dir = str(Path(profile_dir).resolve())
+        self._user_agent = user_agent
+        self._load_timeout_ms = load_timeout_ms
+        self._settle_ms = settle_ms
+        self._scrolls = scrolls
+        self._post_delay_seconds = post_delay_seconds
+        self._comments_per_post = comments_per_post
+
+    @classmethod
+    def from_settings(cls) -> "PlaywrightRedditSource":
+        return cls(
+            user_agent=settings.reddit_user_agent,
+            profile_dir=getattr(settings, "reddit_profile_dir", ".playwright-profile/reddit"),
+            load_timeout_ms=int(settings.http_timeout * 1000),
+            settle_ms=3000,
+            scrolls=2,
+            post_delay_seconds=max(0, int(getattr(settings, "reddit_post_delay_seconds", 60))),
+            comments_per_post=max(1, int(settings.comments_per_post)),
+        )
+
+    def _fetch_page_dump(self, subreddit: str, limit: int) -> list[dict]:
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Playwright is required for browser-backed Reddit scraping"
+            ) from exc
+
+        listing_url = f"https://www.reddit.com/r/{subreddit}/new/"
+        posts_payload: list[dict] = []
+
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=self._profile_dir,
+                headless=True,
+                viewport={"width": 1440, "height": 1800},
+                user_agent=self._user_agent,
+                locale="en-US",
+                timezone_id="UTC",
+            )
+            page = context.new_page()
+            page.goto(listing_url, wait_until="domcontentloaded", timeout=self._load_timeout_ms)
+            page.wait_for_timeout(self._settle_ms)
+
+            for _ in range(max(0, self._scrolls)):
+                page.mouse.wheel(0, 1800)
+                page.wait_for_timeout(1200)
+
+            rows = page.eval_on_selector_all(
+                "a[href*='/comments/']",
+                r"""
+                (els) => {
+                  const out = [];
+                  const seen = new Set();
+                  for (const a of els) {
+                    const href = a.getAttribute('href') || '';
+                    if (!href.includes('/comments/')) continue;
+                    if (seen.has(href)) continue;
+                    seen.add(href);
+                    const text = (a.textContent || '').trim();
+                    const m = href.match(/\/comments\/([a-z0-9]+)\//i);
+                    out.push({
+                      id: m ? m[1] : null,
+                      title: text,
+                      permalink: href,
+                    });
+                  }
+                  return out;
+                }
+                """,
+            )
+
+            for row in rows[: max(1, limit)]:
+                permalink = str(row.get("permalink") or "")
+                if permalink.startswith("/"):
+                    permalink = f"https://www.reddit.com{permalink}"
+                posts_payload.append(
+                    {
+                        "id": str(row.get("id") or "").strip(),
+                        "title": str(row.get("title") or ""),
+                        "permalink": permalink,
+                    }
+                )
+
+            context.close()
+
+        return posts_payload
+
+    def new_posts(self, subreddit: str, limit: int) -> Iterable[RawPost]:
+        for post in self._fetch_page_dump(subreddit, limit):
+            permalink = str(post.get("permalink") or "")
+            post_id = str(post.get("id") or "").strip()
+            page_html = self._fetch_post_html(permalink)
+            title, body, author, score, created_utc, num_comments = self._parse_post_html(
+                page_html, fallback_title=str(post.get("title") or ""), fallback_id=post_id
+            )
+            yield RawPost(
+                fullname=f"t3_{post_id}" if post_id else "",
+                id=post_id,
+                title=title,
+                body=body,
+                author=author,
+                score=score,
+                permalink=permalink,
+                created_utc=created_utc,
+                num_comments=num_comments,
+            )
+
+    def post_comments(self, post_id: str, limit: int) -> Iterable[RawComment]:
+        comments = self._fetch_post_comments(post_id, limit)
+        for comment in comments:
+            yield comment
+
+    def _fetch_post_html(self, permalink: str) -> str:
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Playwright is required for browser-backed Reddit scraping"
+            ) from exc
+
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=self._profile_dir,
+                headless=True,
+                viewport={"width": 1440, "height": 1800},
+                user_agent=self._user_agent,
+                locale="en-US",
+                timezone_id="UTC",
+            )
+            page = context.new_page()
+            page.goto(permalink, wait_until="domcontentloaded", timeout=self._load_timeout_ms)
+            page.wait_for_timeout(self._settle_ms)
+            html = page.content()
+            context.close()
+            return html
+
+    def _parse_post_html(
+        self, page_html: str, *, fallback_title: str, fallback_id: str
+    ) -> tuple[str, str, str | None, int, float, int]:
+        title = fallback_title
+        body = ""
+        author: str | None = None
+        score = 0
+        created_utc = 0.0
+        num_comments = 0
+
+        match = re.search(r'<reddit-page-data data="([^"]+)"', page_html)
+        if match:
+            try:
+                data = json.loads(html_module.unescape(match.group(1)))
+                # reddit-page-data currently stores the subreddit container.
+                # We keep this best-effort and fall back to rendered content.
+                subreddit_data = data.get("subreddit") if isinstance(data, dict) else None
+                if isinstance(subreddit_data, dict):
+                    author = str(subreddit_data.get("name") or None) or None
+            except Exception:  # noqa: BLE001
+                pass
+
+        body_match = re.search(r'"post"\s*:\s*\{.*?"title"\s*:\s*"(.*?)"', page_html)
+        if body_match:
+            title = html_module.unescape(body_match.group(1))
+
+        text_match = re.search(r'<article[\s\S]*?<p[^>]*>(.*?)</p>', page_html)
+        if text_match:
+            body = re.sub(r"<[^>]+>", "", text_match.group(1)).strip()
+
+        score_match = re.search(r'"score"\s*:\s*(\d+)', page_html)
+        if score_match:
+            score = int(score_match.group(1))
+
+        comments_match = re.search(r'"number_comments"\s*:\s*(\d+)', page_html)
+        if comments_match:
+            num_comments = int(comments_match.group(1))
+
+        created_match = re.search(r'"created_timestamp"\s*:\s*(\d+)', page_html)
+        if created_match:
+            created_utc = int(created_match.group(1)) / 1000.0
+
+        if not body:
+            body = title
+
+        return title, body, author, score, created_utc, num_comments
+
+    def _fetch_post_comments(self, post_id: str, limit: int) -> list[RawComment]:
+        # Best-effort comment extraction from rendered page HTML. This is intended
+        # to track the same data the local test script retrieves.
+        url = f"https://www.reddit.com/comments/{post_id}/"
+        html = self._fetch_post_html(url)
+        comments: list[RawComment] = []
+        seen: set[str] = set()
+        for match in re.finditer(r'<shreddit-comment[^>]*>([\s\S]*?)</shreddit-comment>', html):
+            snippet = match.group(1)
+            text = re.sub(r"<[^>]+>", " ", snippet)
+            text = re.sub(r"\s+", " ", text).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            comments.append(
+                RawComment(
+                    fullname=f"t1_{len(comments) + 1}",
+                    body=text,
+                    author=None,
+                    score=0,
+                    permalink=url,
+                    created_utc=0.0,
+                    parent_fullname=f"t3_{post_id}",
+                )
+            )
+            if len(comments) >= max(1, limit):
+                break
+        return comments
+
+
+def build_reddit_source() -> RedditSource:
+    """Build the Reddit source from settings.
+
+    Modes:
+    - ``praw``: always use OAuth/PRAW (requires credentials)
+    - ``scrape``: always use public reddit.com JSON endpoints
+    - ``auto``: use PRAW if credentials are present, otherwise scrape
+    """
+
+    mode = (settings.reddit_source_mode or "auto").strip().lower()
+    has_oauth = bool(settings.reddit_client_id and settings.reddit_client_secret)
+
+    if mode == "praw":
+        if not has_oauth:
+            raise ValueError(
+                "REDDIT_SOURCE_MODE=praw requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET"
+            )
+        return PrawRedditSource.from_settings()
+
+    if mode == "scrape":
+        return PlaywrightRedditSource.from_settings()
+
+    if mode != "auto":
+        raise ValueError("REDDIT_SOURCE_MODE must be one of: auto, praw, scrape")
+
+    if has_oauth:
+        log.info("reddit source mode auto: using PRAW OAuth source")
+        return PrawRedditSource.from_settings()
+
+    log.warning(
+        "reddit source mode auto: REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET missing; "
+        "falling back to browser-backed scraping"
+    )
+    return PlaywrightRedditSource.from_settings()
 
 
 # ----------------------------------------------------------------------------

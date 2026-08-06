@@ -21,6 +21,9 @@ docker compose up --build
 # Run the test suite (in-memory SQLite; no Docker/Postgres/Ollama needed)
 pip install -e ".[dev]"
 pytest -v
+
+# If running scrape mode outside Docker, install Chromium for Playwright
+playwright install chromium
 ```
 
 ## Architecture
@@ -48,8 +51,11 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
 
 - `DATABASE_URL` — PostgreSQL DSN (required in production).
 - `API_LISTEN_ADDRESS` (default `0.0.0.0`), `API_PORT` (default `8018`).
-- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — Reddit OAuth (script app).
-  Use a descriptive user-agent such as `docker:quant_reddit:v0.1.0 (by /u/homelabids)`.
+- `REDDIT_SOURCE_MODE` — `auto` (default), `praw`, or `scrape`.
+  - `auto`: uses OAuth/PRAW when `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` are set; otherwise falls back to browser-backed scraping.
+  - `praw`: forces OAuth/PRAW and requires `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`.
+  - `scrape`: forces browser-backed scraping (Playwright Chromium).
+- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — used by PRAW mode; user-agent is always sent and should be descriptive.
 - `OLLAMA_BASE_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3.1`).
 - `QUANT_SIGNALS_URL` (default `http://localhost:8016`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017`).
 - `QUANT_REDDIT_*` — tuning knobs (poll interval, batch sizes, signal type, pagination).

@@ -58,13 +58,25 @@ class TestConfigValidation:
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         problems = validate_config(Settings(), database_url=None)
         assert any("DATABASE_URL" in p for p in problems)
-        assert any("REDDIT_CLIENT_ID" in p for p in problems)
+        assert not any("REDDIT_CLIENT_ID" in p for p in problems)
 
     def test_valid_config_has_no_problems(self, monkeypatch):
         monkeypatch.setenv("REDDIT_CLIENT_ID", "cid")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         problems = validate_config(Settings(), database_url="postgresql+psycopg://x/y")
         assert problems == []
+
+    def test_praw_mode_requires_reddit_credentials(self, monkeypatch):
+        monkeypatch.setenv("REDDIT_SOURCE_MODE", "praw")
+        monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+        monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+        problems = validate_config(Settings(), database_url="postgresql+psycopg://x/y")
+        assert any("REDDIT_CLIENT_ID" in p for p in problems)
+
+    def test_invalid_source_mode_reported(self, monkeypatch):
+        monkeypatch.setenv("REDDIT_SOURCE_MODE", "bogus")
+        problems = validate_config(Settings(), database_url="postgresql+psycopg://x/y")
+        assert any("REDDIT_SOURCE_MODE" in p for p in problems)
 
     def test_non_http_downstream_url_reported(self, monkeypatch):
         monkeypatch.setenv("REDDIT_CLIENT_ID", "cid")

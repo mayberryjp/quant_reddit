@@ -1,7 +1,8 @@
 """Worker process entry point (supervisord ``[program:worker]``).
 
-Wires the real Reddit (PRAW), Ollama, and downstream-emitter components into the
-orchestrator's ``ingest → distill → emit`` loop.
+Wires the configured Reddit source (OAuth/PRAW or public JSON scrape), Ollama,
+and downstream-emitter components into the orchestrator's
+``ingest → distill → emit`` loop.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from app.db import get_engine
 from app.repository.postgres import RedditRepository
 from app.services import orchestrator
 from app.services.ollama_client import OllamaClient
-from app.services.reddit_client import PrawRedditSource
+from app.services.reddit_client import build_reddit_source
 from app.services.sentiment_emitter import SentimentEmitter
 from app.services.signal_emitter import SignalEmitter
 
@@ -32,9 +33,10 @@ logging.basicConfig(
 def main() -> None:
     log_config_problems()
     repo = RedditRepository(get_engine())
+    reddit_source = build_reddit_source()
     orchestrator.run_forever(
         repo,
-        reddit_source=PrawRedditSource.from_settings(),
+        reddit_source=reddit_source,
         llm_client=OllamaClient(),
         sentiment_emitter=SentimentEmitter(repo),
         signal_emitter=SignalEmitter(repo),

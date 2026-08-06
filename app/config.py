@@ -18,6 +18,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # --- Reddit source mode ----------------------------------------------
+    # auto: prefer OAuth/PRAW when credentials are present, otherwise use
+    # unauthenticated HTTP JSON scraping of reddit.com endpoints.
+    reddit_source_mode: str = Field(default="auto", validation_alias="REDDIT_SOURCE_MODE")
+
     # --- Reddit credentials (read unprefixed) ----------------------------
     reddit_client_id: str = Field(default="", validation_alias="REDDIT_CLIENT_ID")
     reddit_client_secret: str = Field(
@@ -32,6 +37,9 @@ class Settings(BaseSettings):
     )
     reddit_password: str | None = Field(
         default=None, validation_alias="REDDIT_PASSWORD"
+    )
+    reddit_http_base_url: str = Field(
+        default="https://www.reddit.com", validation_alias="REDDIT_HTTP_BASE_URL"
     )
 
     # --- Ollama (read unprefixed) ----------------------------------------
@@ -100,15 +108,19 @@ def validate_config(s: Settings, database_url: str | None) -> list[str]:
         problems.append(
             "DATABASE_URL is not set (required for persistence and migrations)"
         )
-    if not s.reddit_client_id or not s.reddit_client_secret:
+    source_mode = (s.reddit_source_mode or "auto").strip().lower()
+    if source_mode not in {"auto", "praw", "scrape"}:
+        problems.append("REDDIT_SOURCE_MODE must be one of: auto, praw, scrape")
+    if source_mode == "praw" and (not s.reddit_client_id or not s.reddit_client_secret):
         problems.append(
             "REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set "
-            "(required for Reddit ingestion)"
+            "(required when REDDIT_SOURCE_MODE=praw)"
         )
     for name, url in (
         ("QUANT_SIGNALS_URL", s.quant_signals_url),
         ("QUANT_SENTIMENT_URL", s.quant_sentiment_url),
         ("OLLAMA_BASE_URL", s.ollama_base_url),
+        ("REDDIT_HTTP_BASE_URL", s.reddit_http_base_url),
     ):
         if not (url.startswith("http://") or url.startswith("https://")):
             problems.append(f"{name} must be an http(s) URL")

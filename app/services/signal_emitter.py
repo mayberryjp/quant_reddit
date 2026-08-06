@@ -55,13 +55,16 @@ def build_signal_request(
         "signal_type": settings.watchlist_signal_type,
         "direction": direction.value,
         "confidence": finding.confidence,
-        "reason": (finding.rationale or "")[: settings.max_reason_length],
+        "reason": ((finding.context or finding.rationale) or "")[: settings.max_reason_length],
         "tags": list(TAGS),
         "metadata": {
             "reddit_fullname": reddit_fullname,
             "model": model,
             "prompt_version": prompt_version,
             "window": window,
+            "guest": finding.speaker,
+            "company_name": finding.company_name,
+            "raw_mention": finding.raw_mention,
         },
     }
 

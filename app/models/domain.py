@@ -87,6 +87,14 @@ class TickerFinding(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     is_watchlist_candidate: bool = False
     rationale: str = ""
+    # cnbc-style pass metadata (optional in reddit flow)
+    subject_type: str = "ticker"
+    sentiment_label: str | None = None
+    horizon: str | None = None
+    raw_mention: str | None = None
+    company_name: str | None = None
+    speaker: str | None = None
+    context: str | None = None
 
 
 class LlmExtraction(BaseModel):
