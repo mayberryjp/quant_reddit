@@ -252,9 +252,78 @@ def _merge_usage(acc: dict[str, Any], usage: dict[str, Any]) -> None:
             acc[k] = acc.get(k, 0) + v
 
 
+def _extract_balanced_json_fragment(text: str) -> str | None:
+    """Return the first balanced JSON object/array fragment from free-form text."""
+    if not text:
+        return None
+
+    starts = [i for i, ch in enumerate(text) if ch in "[{"]
+    for start in starts:
+        opener = text[start]
+        closer = "}" if opener == "{" else "]"
+        depth = 0
+        in_string = False
+        escape = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+    return None
+
+
+def _parse_model_json(content: str) -> Any:
+    """Parse model output as JSON, tolerating common LLM wrappers.
+
+    Accepts:
+    1) raw JSON,
+    2) JSON inside markdown code fences,
+    3) first balanced JSON fragment embedded in surrounding prose.
+    """
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    for block in re.findall(r"```(?:json)?\\s*(.*?)```", content, flags=re.IGNORECASE | re.DOTALL):
+        candidate = block.strip()
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    fragment = _extract_balanced_json_fragment(content)
+    if fragment:
+        return json.loads(fragment)
+
+    raise json.JSONDecodeError("Unable to parse model JSON", content, 0)
+
+
 def _complete_json(client: LlmClient, system: str, user: str) -> tuple[dict[str, Any], dict[str, Any]]:
     content = client.chat(system, user)
-    return json.loads(content), {}
+    data = _parse_model_json(content)
+    if not isinstance(data, dict):
+        raise TypeError("Expected top-level JSON object from model")
+    return data, {}
 
 
 def distill(llm_client: LlmClient, text: str, *, max_chunk_chars: int = 6000) -> tuple[DistillOutput, dict[str, Any]]:
@@ -308,7 +377,7 @@ def _label_to_direction(label: str | None) -> Direction:
 
 def parse_findings(content: str) -> tuple[list[TickerFinding], int]:
     """Backward-compatible parser for old one-pass finding JSON shape."""
-    data = json.loads(content)
+    data = _parse_model_json(content)
     raw_list = []
     if isinstance(data, list):
         raw_list = data
@@ -433,7 +502,7 @@ def distill_item(
         # Backward compatibility path: if a model still returns direct
         # {"findings": [...]} we preserve one-pass behavior.
         legacy_content = client.chat(SYSTEM_PROMPT, framed_text)
-        legacy_data = json.loads(legacy_content)
+        legacy_data = _parse_model_json(legacy_content)
         if isinstance(legacy_data, dict) and isinstance(legacy_data.get("findings"), list):
             findings, rejected = parse_findings(legacy_content)
             distill_out = DistillOutput(summary=text)

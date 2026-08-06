@@ -84,6 +84,23 @@ class TestParseFindings:
         findings, _ = parse_findings(_findings_json({**GME, "ticker": "$gme"}))
         assert findings[0].ticker == "GME"
 
+    def test_markdown_fenced_json(self):
+        wrapped = """Here you go:\n```json\n{"findings": [{"ticker": "GME", "sentiment_score": 80, "direction": "long", "confidence": 0.9, "is_watchlist_candidate": true, "rationale": "short squeeze"}]}\n```"""
+        findings, rejected = parse_findings(wrapped)
+        assert rejected == 0
+        assert len(findings) == 1
+        assert findings[0].ticker == "GME"
+
+    def test_prose_wrapped_json(self):
+        wrapped = (
+            "Output follows. "
+            + _findings_json(GME)
+            + " End of output."
+        )
+        findings, rejected = parse_findings(wrapped)
+        assert rejected == 0
+        assert len(findings) == 1
+
     def test_malformed_json_raises(self):
         try:
             parse_findings("not json {")
@@ -121,6 +138,16 @@ class TestDistillItem:
         assert out.malformed is True
         assert repo.get_extraction("t3_bad", settings.ollama_model, PROMPT_VERSION) is None
         assert repo.get_item("t3_bad").process_state is ProcessState.failed
+
+    def test_wrapped_json_still_parses(self, repo, make_item):
+        item = make_item(fullname="t3_wrapped")
+        repo.insert_item(item)
+        wrapped = """```json
+{"findings": [{"ticker": "GME", "sentiment_score": 80, "direction": "long", "confidence": 0.9, "is_watchlist_candidate": true, "rationale": "short squeeze"}]}
+```"""
+        out = distill_item(repo, FakeClient(wrapped), item)
+        assert out.status is ProcessState.distilled
+        assert out.findings == 1
 
     def test_llm_error_marks_failed(self, repo, make_item):
         item = make_item(fullname="t3_err")
