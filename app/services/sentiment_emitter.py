@@ -138,7 +138,7 @@ class SentimentEmitter:
             prompt_version=prompt_version,
         )
         resp = post_json(
-            f"{self.base_url}/sentiment",
+            self.base_url,
             body,
             timeout=self.timeout,
             retries=self.retries,

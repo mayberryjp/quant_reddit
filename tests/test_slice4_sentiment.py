@@ -10,7 +10,7 @@ import respx
 from app.models.domain import EmissionStatus, EmissionTarget, TickerFinding
 from app.services.sentiment_emitter import SentimentEmitter, sentiment_idempotency_key
 
-BASE = "http://sentiment.test:8017"
+BASE = "http://sentiment.test:8017/sentiment"
 SOURCE = "reddit-wsb-v1"
 MODEL = "llama3.1"
 PROMPT = "wsb-distill-v1"
@@ -45,7 +45,7 @@ class TestRequestMapping:
     @respx.mock
     def test_request_body_exact(self, repo, make_item):
         item = make_item(fullname="t3_abc", permalink="https://reddit.com/x")
-        route = respx.post(f"{BASE}/sentiment").mock(
+        route = respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs-1"})
         )
         _emitter(repo).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
@@ -80,9 +80,24 @@ class TestRequestMapping:
 
 class TestOutcomes:
     @respx.mock
+    def test_uses_base_url_as_is(self, repo, make_item):
+        item = make_item(fullname="t3_suffix")
+        route = respx.post(BASE).mock(
+            return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs-suffix"})
+        )
+        rec = _emitter(repo, base_url=BASE).emit(
+            item,
+            _finding(),
+            model=MODEL,
+            prompt_version=PROMPT,
+        )
+        assert rec.status is EmissionStatus.accepted
+        assert route.call_count == 1
+
+    @respx.mock
     def test_accepted_201(self, repo, make_item):
         item = make_item(fullname="t3_a")
-        respx.post(f"{BASE}/sentiment").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs-1"})
         )
         rec = _emitter(repo).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
@@ -95,7 +110,7 @@ class TestOutcomes:
     @respx.mock
     def test_duplicate_200(self, repo, make_item):
         item = make_item(fullname="t3_b")
-        respx.post(f"{BASE}/sentiment").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(200, json={"status": "duplicate", "sentiment_id": "obs-2"})
         )
         rec = _emitter(repo).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
@@ -105,7 +120,7 @@ class TestOutcomes:
     @respx.mock
     def test_validation_error_422_failed(self, repo, make_item):
         item = make_item(fullname="t3_c")
-        respx.post(f"{BASE}/sentiment").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(422, json={"detail": "bad"})
         )
         rec = _emitter(repo).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
@@ -115,7 +130,7 @@ class TestOutcomes:
     @respx.mock
     def test_server_error_retries_then_failed(self, repo, make_item):
         item = make_item(fullname="t3_d")
-        route = respx.post(f"{BASE}/sentiment").mock(return_value=httpx.Response(500))
+        route = respx.post(BASE).mock(return_value=httpx.Response(500))
         rec = _emitter(repo, retries=3).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
         assert rec.status is EmissionStatus.failed
         assert rec.http_status == 500
@@ -124,7 +139,7 @@ class TestOutcomes:
     @respx.mock
     def test_network_error_failed(self, repo, make_item):
         item = make_item(fullname="t3_e")
-        route = respx.post(f"{BASE}/sentiment").mock(side_effect=httpx.ConnectError("down"))
+        route = respx.post(BASE).mock(side_effect=httpx.ConnectError("down"))
         rec = _emitter(repo, retries=2).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
         assert rec.status is EmissionStatus.failed
         assert rec.http_status is None
@@ -140,7 +155,7 @@ class TestOutcomes:
             status=EmissionStatus.accepted,
             ticker="GME",
         )
-        route = respx.post(f"{BASE}/sentiment").mock(return_value=httpx.Response(201))
+        route = respx.post(BASE).mock(return_value=httpx.Response(201))
         rec = _emitter(repo).emit(item, _finding(), model=MODEL, prompt_version=PROMPT)
         assert rec.status is EmissionStatus.accepted
         assert route.called is False  # no re-POST on re-run

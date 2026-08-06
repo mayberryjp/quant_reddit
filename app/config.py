@@ -50,10 +50,10 @@ class Settings(BaseSettings):
 
     # --- Downstream services (read unprefixed) ---------------------------
     quant_signals_url: str = Field(
-        default="http://localhost:8016", validation_alias="QUANT_SIGNALS_URL"
+        default="http://localhost:8016/signals", validation_alias="QUANT_SIGNALS_URL"
     )
     quant_sentiment_url: str = Field(
-        default="http://localhost:8017", validation_alias="QUANT_SENTIMENT_URL"
+        default="http://localhost:8017/sentiment", validation_alias="QUANT_SENTIMENT_URL"
     )
 
     # --- Reddit ingestion (QUANT_REDDIT_ prefix) -------------------------

@@ -58,7 +58,7 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
   - `scrape`: forces browser-backed scraping (Playwright Chromium).
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — used by PRAW mode; user-agent is always sent and should be descriptive.
 - `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`), `OLLAMA_MODEL` (default `llama3.1`).
-- `QUANT_SIGNALS_URL` (default `http://localhost:8016`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017`).
+- `QUANT_SIGNALS_URL` (default `http://localhost:8016/signals`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017/sentiment`).
 - `QUANT_REDDIT_*` — tuning knobs (ingest/process interval, batch sizes, signal type, pagination).
   See [.env.example](.env.example).
 

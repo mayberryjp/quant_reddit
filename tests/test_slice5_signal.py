@@ -14,7 +14,7 @@ from app.services.signal_emitter import (
     signal_idempotency_key,
 )
 
-BASE = "http://signals.test:8016"
+BASE = "http://signals.test:8016/signals"
 SOURCE = "reddit-wsb-v1"
 MODEL = "llama3.1"
 PROMPT = "wsb-distill-v1"
@@ -47,8 +47,24 @@ def _finding(**overrides) -> TickerFinding:
 
 class TestEmission:
     @respx.mock
+    def test_uses_base_url_as_is(self, repo):
+        route = respx.post(BASE).mock(
+            return_value=httpx.Response(201, json={"signal_cache_id": "sig-suffix"})
+        )
+        rec = _emitter(repo, base_url=BASE).emit_finding(
+            "t3_suffix",
+            _finding(),
+            model=MODEL,
+            prompt_version=PROMPT,
+            window="1d",
+            day=DAY,
+        )
+        assert rec.status is EmissionStatus.accepted
+        assert route.call_count == 1
+
+    @respx.mock
     def test_request_body_mapping(self, repo):
-        respx.post(f"{BASE}/signals").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig-1"})
         )
         _emitter(repo).emit_finding(
@@ -74,7 +90,7 @@ class TestEmission:
 
     @respx.mock
     def test_accepted(self, repo):
-        respx.post(f"{BASE}/signals").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig-1"})
         )
         rec = _emitter(repo).emit_finding("t3_0", _finding(), model=MODEL, prompt_version=PROMPT, window="1d", day=DAY)
@@ -84,7 +100,7 @@ class TestEmission:
 
     @respx.mock
     def test_duplicate_from_http_200(self, repo):
-        respx.post(f"{BASE}/signals").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(200, json={"signal_cache_id": "sig-1"})
         )
         rec = _emitter(repo).emit_finding("t3_0", _finding(), model=MODEL, prompt_version=PROMPT, window="1d", day=DAY)
@@ -92,7 +108,7 @@ class TestEmission:
 
     @respx.mock
     def test_body_status_is_ignored_when_http_201(self, repo):
-        respx.post(f"{BASE}/signals").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"status": "unresolved", "signal_cache_id": "sig-1"})
         )
         rec = _emitter(repo).emit_finding("t3_0", _finding(), model=MODEL, prompt_version=PROMPT, window="1d", day=DAY)
@@ -102,14 +118,14 @@ class TestEmission:
 
     @respx.mock
     def test_server_error_failed(self, repo):
-        route = respx.post(f"{BASE}/signals").mock(return_value=httpx.Response(500))
+        route = respx.post(BASE).mock(return_value=httpx.Response(500))
         rec = _emitter(repo, retries=2).emit_finding("t3_0", _finding(), model=MODEL, prompt_version=PROMPT, window="1d", day=DAY)
         assert rec.status is EmissionStatus.failed
         assert route.call_count == 2
 
     @respx.mock
     def test_idempotency_key_and_skip_on_rerun(self, repo):
-        route = respx.post(f"{BASE}/signals").mock(
+        route = respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig-1"})
         )
         em = _emitter(repo)
@@ -121,7 +137,7 @@ class TestEmission:
 
     @respx.mock
     def test_emit_all_submits_each_item_ticker(self, repo):
-        respx.post(f"{BASE}/signals").mock(
+        respx.post(BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig-x"})
         )
         pairs = [

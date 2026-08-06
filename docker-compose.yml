@@ -24,8 +24,8 @@ services:
       API_PORT: "8018"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
-      QUANT_SIGNALS_URL: ${QUANT_SIGNALS_URL:-http://host.docker.internal:8016}
-      QUANT_SENTIMENT_URL: ${QUANT_SENTIMENT_URL:-http://host.docker.internal:8017}
+      QUANT_SIGNALS_URL: ${QUANT_SIGNALS_URL:-http://host.docker.internal:8016/signals}
+      QUANT_SENTIMENT_URL: ${QUANT_SENTIMENT_URL:-http://host.docker.internal:8017/sentiment}
       QUANT_REDDIT_INGEST_INTERVAL: ${QUANT_REDDIT_INGEST_INTERVAL:-3600}
       QUANT_REDDIT_PROCESS_INTERVAL: ${QUANT_REDDIT_PROCESS_INTERVAL:-60}
       QUANT_REDDIT_SUBREDDITS: ${QUANT_REDDIT_SUBREDDITS:-wallstreetbets,stocks,investing}

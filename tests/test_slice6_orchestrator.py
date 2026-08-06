@@ -13,8 +13,8 @@ from app.services.reddit_client import RawPost
 from app.services.sentiment_emitter import SentimentEmitter
 from app.services.signal_emitter import SignalEmitter
 
-SENTIMENT_BASE = "http://sentiment.test:8017"
-SIGNALS_BASE = "http://signals.test:8016"
+SENTIMENT_BASE = "http://sentiment.test:8017/sentiment"
+SIGNALS_BASE = "http://signals.test:8016/signals"
 DAY = date(2026, 7, 6)
 
 GME_FINDINGS = json.dumps(
@@ -86,10 +86,10 @@ def _emitters(repo):
 class TestFullCycle:
     @respx.mock
     def test_cycle_then_idempotent_rerun(self, repo):
-        respx.post(f"{SENTIMENT_BASE}/sentiment").mock(
+        respx.post(SENTIMENT_BASE).mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
-        respx.post(f"{SIGNALS_BASE}/signals").mock(
+        respx.post(SIGNALS_BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
         source = FakeSource(posts=[_post(f"p{i}") for i in range(4)])
@@ -142,10 +142,10 @@ class TestFullCycle:
 
     @respx.mock
     def test_per_finding_emits_without_threshold_gating(self, repo):
-        respx.post(f"{SENTIMENT_BASE}/sentiment").mock(
+        respx.post(SENTIMENT_BASE).mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
-        signals_route = respx.post(f"{SIGNALS_BASE}/signals").mock(
+        signals_route = respx.post(SIGNALS_BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
         # Two mentions still yield two signal submissions under per-finding parity.
@@ -168,10 +168,10 @@ class TestFullCycle:
 class TestRunForever:
     @respx.mock
     def test_run_once_drives_a_cycle(self, repo):
-        respx.post(f"{SENTIMENT_BASE}/sentiment").mock(
+        respx.post(SENTIMENT_BASE).mock(
             return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
         )
-        respx.post(f"{SIGNALS_BASE}/signals").mock(
+        respx.post(SIGNALS_BASE).mock(
             return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
         )
         source = FakeSource(posts=[_post(f"p{i}") for i in range(3)])

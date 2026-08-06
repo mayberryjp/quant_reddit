@@ -115,7 +115,7 @@ class SignalEmitter:
             window=window,
         )
         resp = post_json(
-            f"{self.base_url}/signals",
+            self.base_url,
             body,
             timeout=self.timeout,
             retries=self.retries,
