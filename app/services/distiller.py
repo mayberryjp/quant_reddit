@@ -302,7 +302,7 @@ def _parse_model_json(content: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    for block in re.findall(r"```(?:json)?\\s*(.*?)```", content, flags=re.IGNORECASE | re.DOTALL):
+    for block in re.findall(r"```(?:json)?\s*(.*?)```", content, flags=re.IGNORECASE | re.DOTALL):
         candidate = block.strip()
         if not candidate:
             continue
