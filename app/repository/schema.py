@@ -104,3 +104,16 @@ ingest_cursor = sa.Table(
     sa.Column("last_created_utc", sa.DateTime(timezone=True), nullable=True),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
 )
+
+cycle_runs = sa.Table(
+    "cycle_runs",
+    metadata,
+    _id_column(),
+    sa.Column("run_type", sa.Text, nullable=False),  # "ingest" | "process" | "full"
+    sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("finished_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("result", JSON_VARIANT, nullable=False),
+    sa.Column("error", sa.Text, nullable=True),
+    sa.Index("ix_cycle_runs_started", "started_at"),
+    sa.Index("ix_cycle_runs_type", "run_type", "started_at"),
+)

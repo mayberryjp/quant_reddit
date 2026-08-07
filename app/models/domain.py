@@ -146,3 +146,19 @@ class IngestCursor(BaseModel):
     @classmethod
     def _utc(cls, value: datetime | None) -> datetime | None:
         return _ensure_utc(value)
+
+
+class CycleRun(BaseModel):
+    """One recorded ingest or process cycle execution."""
+
+    id: int | None = None
+    run_type: str  # "ingest" | "process" | "full"
+    started_at: datetime
+    finished_at: datetime
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+    @field_validator("started_at", "finished_at", mode="after")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime:
+        return _ensure_utc(value)

@@ -43,6 +43,7 @@ _ITEM_KINDS = {"post", "comment"}
 _PROCESS_STATES = {"new", "distilled", "skipped", "failed"}
 _TARGETS = {"signals", "sentiment"}
 _STATUSES = {"accepted", "duplicate", "unresolved", "failed"}
+_RUN_TYPES = {"ingest", "process", "full"}
 
 
 def _choice(name: str, allowed: set[str]) -> str | None:
@@ -95,6 +96,22 @@ def emissions_recent():
         target=_choice("target", _TARGETS),
         status=_choice("status", _STATUSES),
         ticker=_param("ticker"),
+        page=page,
+        page_size=page_size,
+    )
+    return {
+        "items": [r.model_dump(mode="json") for r in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@sub.get("/reddit/runs/recent")
+def runs_recent():
+    page, page_size = _page_params()
+    items, total = get_repo().list_cycle_runs(
+        run_type=_choice("run_type", _RUN_TYPES),
         page=page,
         page_size=page_size,
     )

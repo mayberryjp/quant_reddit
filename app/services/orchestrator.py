@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.config import settings
-from app.models.domain import ProcessState
+from app.models.domain import CycleRun, ProcessState
 from app.repository.postgres import HEARTBEAT_SOURCE_KEY, RedditRepository
 from app.services.distiller import PROMPT_VERSION, LlmClient, distill_item
 from app.services.reddit_client import IngestResult, RedditSource, ingest_once
@@ -219,6 +219,8 @@ def run_ingest_forever(
 
     log.info("ingest worker starting (poll interval %ss)", poll_interval)
     while True:
+        started = utcnow()
+        error: str | None = None
         try:
             ingest_result = run_ingest_cycle(
                 repo,
@@ -226,8 +228,22 @@ def run_ingest_forever(
                 **ingest_kwargs,
             )
             log.info("ingest cycle complete: %s", ingest_result.as_dict())
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("ingest cycle failed")
+            error = str(exc)
+            ingest_result = IngestResult()
+        try:
+            repo.insert_cycle_run(
+                CycleRun(
+                    run_type="ingest",
+                    started_at=started,
+                    finished_at=utcnow(),
+                    result=ingest_result.as_dict(),
+                    error=error,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("failed to persist ingest cycle run", exc_info=True)
 
         if run_once or stop.is_set():
             break
@@ -256,6 +272,8 @@ def run_process_forever(
 
     log.info("process worker starting (poll interval %ss)", poll_interval)
     while True:
+        started = utcnow()
+        error: str | None = None
         try:
             process_result = run_process_cycle(
                 repo,
@@ -266,8 +284,22 @@ def run_process_forever(
             )
             log.info("process cycle complete: %s", process_result.as_dict())
             repo.set_heartbeat()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("process cycle failed")
+            error = str(exc)
+            process_result = ProcessResult()
+        try:
+            repo.insert_cycle_run(
+                CycleRun(
+                    run_type="process",
+                    started_at=started,
+                    finished_at=utcnow(),
+                    result=process_result.as_dict(),
+                    error=error,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("failed to persist process cycle run", exc_info=True)
 
         if run_once or stop.is_set():
             break

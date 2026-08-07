@@ -16,6 +16,7 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
 
 from app.models.domain import (
+    CycleRun,
     EmissionRecord,
     EmissionStatus,
     EmissionTarget,
@@ -25,6 +26,7 @@ from app.models.domain import (
     RedditItem,
 )
 from app.repository.schema import (
+    cycle_runs,
     emission_log,
     ingest_cursor,
     llm_extractions,
@@ -103,6 +105,13 @@ def _row_to_cursor(row) -> IngestCursor:
     data["last_created_utc"] = to_utc(data.get("last_created_utc"))
     data["updated_at"] = to_utc(data.get("updated_at"))
     return IngestCursor(**data)
+
+
+def _row_to_run(row) -> CycleRun:
+    data = dict(row)
+    data["started_at"] = to_utc(data.get("started_at"))
+    data["finished_at"] = to_utc(data.get("finished_at"))
+    return CycleRun(**data)
 
 
 class RedditRepository:
@@ -525,3 +534,50 @@ class RedditRepository:
             "emissions": {"signals": _target("signals"), "sentiment": _target("sentiment")},
             "last_fetched_at": last_fetched,
         }
+
+    # ------------------------------------------------------------------
+    # cycle_runs
+    # ------------------------------------------------------------------
+    def insert_cycle_run(self, run: CycleRun) -> CycleRun:
+        """Persist a completed cycle run and return it with its assigned id."""
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                sa.insert(cycle_runs).values(
+                    run_type=run.run_type,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                    result=run.result,
+                    error=run.error,
+                )
+            )
+            row_id = result.inserted_primary_key[0]
+        return run.model_copy(update={"id": row_id})
+
+    def list_cycle_runs(
+        self,
+        *,
+        run_type: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[CycleRun], int]:
+        conditions: list = []
+        if run_type:
+            conditions.append(cycle_runs.c.run_type == run_type)
+        where = sa.and_(*conditions) if conditions else sa.true()
+        offset = max(page - 1, 0) * page_size
+        with self.engine.connect() as conn:
+            total = conn.execute(
+                sa.select(sa.func.count()).select_from(cycle_runs).where(where)
+            ).scalar_one()
+            rows = (
+                conn.execute(
+                    sa.select(cycle_runs)
+                    .where(where)
+                    .order_by(cycle_runs.c.started_at.desc(), cycle_runs.c.id.desc())
+                    .limit(page_size)
+                    .offset(offset)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_run(r) for r in rows], int(total)
