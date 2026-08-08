@@ -167,3 +167,19 @@ class TestIngest:
         result = ingest_once(repo, source, subreddit=SUB)
         assert result.posts_new == 0
         assert result.cursor_fullname is None
+
+    def test_invalid_created_epoch_falls_back_to_fetched_time(self, repo):
+        source = FakeRedditSource(posts=[make_post("p_epoch0", created=0.0)])
+        ingest_once(repo, source, subreddit=SUB)
+        post = repo.get_item("t3_p_epoch0")
+        assert post is not None
+        assert post.created_utc == post.fetched_at
+
+    def test_millisecond_created_epoch_is_normalized(self, repo):
+        epoch_ms = 1_700_000_000_000
+        source = FakeRedditSource(posts=[make_post("p_ms", created=epoch_ms)])
+        ingest_once(repo, source, subreddit=SUB)
+        post = repo.get_item("t3_p_ms")
+        assert post is not None
+        # 2023-11-14T22:13:20Z; ensures milliseconds were converted to seconds.
+        assert int(post.created_utc.timestamp()) == 1_700_000_000

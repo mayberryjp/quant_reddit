@@ -67,3 +67,15 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
 - [Architecture](docs/architecture.md)
 - [Producer Mapping](docs/producer_mapping.md)
 - [Runbook](docs/runbook.md)
+
+## One-Time Data Repair
+
+If older scrape-mode rows contain `created_utc=1970-01-01T00:00:00Z`, run:
+
+```bash
+# Preview only
+python scripts/backfill_created_utc.py
+
+# Apply repair (sets created_utc=fetched_at for epoch-start rows)
+python scripts/backfill_created_utc.py --apply
+```

@@ -390,6 +390,48 @@ class RedditRepository:
             )
         return [_row_to_item(r) for r in rows], int(total)
 
+    def latest_extraction_summaries(
+        self, reddit_fullnames: list[str]
+    ) -> dict[str, dict]:
+        """Return latest extraction ``raw_response`` payloads keyed by fullname.
+
+        When multiple extractions exist for a fullname, the newest by
+        ``created_at DESC, id DESC`` is selected.
+        """
+        if not reddit_fullnames:
+            return {}
+
+        ranked = (
+            sa.select(
+                llm_extractions.c.reddit_fullname,
+                llm_extractions.c.raw_response,
+                sa.func.row_number()
+                .over(
+                    partition_by=llm_extractions.c.reddit_fullname,
+                    order_by=(
+                        llm_extractions.c.created_at.desc(),
+                        llm_extractions.c.id.desc(),
+                    ),
+                )
+                .label("rn"),
+            )
+            .where(llm_extractions.c.reddit_fullname.in_(reddit_fullnames))
+            .subquery()
+        )
+
+        with self.engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    sa.select(ranked.c.reddit_fullname, ranked.c.raw_response).where(
+                        ranked.c.rn == 1
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+        return {r["reddit_fullname"]: (r["raw_response"] or {}) for r in rows}
+
     def list_extractions(
         self,
         *,

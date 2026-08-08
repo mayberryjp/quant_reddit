@@ -39,6 +39,38 @@ def _param(name: str) -> str | None:
     return request.params.get(name) or None
 
 
+def _flag(name: str) -> bool:
+    value = (request.params.get(name) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _extract_summary_text(raw_response: dict | None) -> str | None:
+    if not isinstance(raw_response, dict):
+        return None
+    summary_payload = raw_response.get("summary")
+    if isinstance(summary_payload, dict):
+        summary_text = summary_payload.get("summary")
+        if isinstance(summary_text, str) and summary_text.strip():
+            return summary_text
+    return None
+
+
+def _char_counts(title: str | None, body: str | None, summary: str | None) -> dict[str, int]:
+    title_text = title or ""
+    body_text = body or ""
+    if title_text and body_text:
+        content_text = f"{title_text}\n{body_text}"
+    else:
+        content_text = title_text or body_text
+    summary_text = summary or ""
+    return {
+        "title_chars": len(title_text),
+        "body_chars": len(body_text),
+        "content_chars": len(content_text),
+        "summary_chars": len(summary_text),
+    }
+
+
 _ITEM_KINDS = {"post", "comment"}
 _PROCESS_STATES = {"new", "distilled", "skipped", "failed"}
 _TARGETS = {"signals", "sentiment"}
@@ -56,6 +88,8 @@ def _choice(name: str, allowed: set[str]) -> str | None:
 @sub.get("/reddit/items/recent")
 def items_recent():
     page, page_size = _page_params()
+    include_summary = _flag("include_summary")
+    include_char_counts = _flag("include_char_counts")
     items, total = get_repo().list_items(
         kind=_choice("kind", _ITEM_KINDS),
         process_state=_choice("process_state", _PROCESS_STATES),
@@ -63,8 +97,23 @@ def items_recent():
         page=page,
         page_size=page_size,
     )
+    payload_items = [i.model_dump(mode="json") for i in items]
+
+    if include_summary or include_char_counts:
+        repo = get_repo()
+        fullnames = [i.fullname for i in items]
+        summaries = repo.latest_extraction_summaries(fullnames)
+        for item_model, payload in zip(items, payload_items):
+            summary_text = _extract_summary_text(summaries.get(item_model.fullname))
+            if include_summary:
+                payload["summary_text"] = summary_text
+            if include_char_counts:
+                payload.update(
+                    _char_counts(item_model.title, item_model.body, summary_text)
+                )
+
     return {
-        "items": [i.model_dump(mode="json") for i in items],
+        "items": payload_items,
         "total": total,
         "page": page,
         "page_size": page_size,

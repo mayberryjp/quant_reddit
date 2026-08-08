@@ -334,7 +334,7 @@ class PlaywrightRedditSource:
 
         created_match = re.search(r'"created_timestamp"\s*:\s*(\d+)', page_html)
         if created_match:
-            created_utc = int(created_match.group(1)) / 1000.0
+            created_utc = float(created_match.group(1))
 
         if not body:
             body = title
@@ -428,6 +428,33 @@ def _epoch_to_utc(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, tz=timezone.utc)
 
 
+def _normalize_epoch(epoch: float | int | None) -> float | None:
+    """Normalize epoch values from source payloads.
+
+    Accepts either seconds or milliseconds. Returns ``None`` when the value is
+    missing or invalid.
+    """
+    if epoch is None:
+        return None
+    try:
+        value = float(epoch)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    # Millisecond epoch values are common in web payloads.
+    if value > 10_000_000_000:
+        value /= 1000.0
+    return value
+
+
+def _safe_created_utc(epoch: float | int | None, fallback: datetime) -> datetime:
+    normalized = _normalize_epoch(epoch)
+    if normalized is None:
+        return fallback
+    return _epoch_to_utc(normalized)
+
+
 def has_ticker_mention(text: str) -> bool:
     return bool(_CASHTAG_RE.search(text or ""))
 
@@ -456,7 +483,7 @@ def _post_to_item(post: RawPost, subreddit: str, fetched_at: datetime) -> Reddit
         score=post.score,
         permalink=post.permalink,
         parent_fullname=None,
-        created_utc=_epoch_to_utc(post.created_utc),
+        created_utc=_safe_created_utc(post.created_utc, fetched_at),
         fetched_at=fetched_at,
         process_state=ProcessState.new,
     )
@@ -475,7 +502,7 @@ def _comment_to_item(
         score=comment.score,
         permalink=comment.permalink,
         parent_fullname=comment.parent_fullname,
-        created_utc=_epoch_to_utc(comment.created_utc),
+        created_utc=_safe_created_utc(comment.created_utc, fetched_at),
         fetched_at=fetched_at,
         process_state=ProcessState.new,
     )
@@ -550,7 +577,7 @@ def ingest_once(
         repo.upsert_cursor(
             cursor_key,
             last_fullname=newest.fullname,
-            last_created_utc=_epoch_to_utc(newest.created_utc),
+            last_created_utc=_safe_created_utc(newest.created_utc, fetched_at),
         )
         result.cursor_fullname = newest.fullname
 

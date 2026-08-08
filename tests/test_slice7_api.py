@@ -112,6 +112,34 @@ class TestItemsRecent:
         assert r.status_int == 422
         assert "detail" in r.json
 
+    def test_items_include_summary_and_char_counts(self, app_client, repo, make_item):
+        item = make_item(fullname="t3_summary", title="ABC", body="def ghi")
+        repo.insert_item(item)
+        repo.insert_extraction(
+            LlmExtraction(
+                reddit_fullname="t3_summary",
+                model="llama3.1",
+                prompt_version="wsb-cnbc-parity-v1",
+                raw_response={"summary": {"summary": "Short summary"}},
+                extracted=[TickerFinding(ticker="ABC", sentiment_score=25)],
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+        r = app_client.get(
+            "/reddit/items/recent",
+            {"kind": "post", "include_summary": "1", "include_char_counts": "1"},
+        )
+        assert r.status_int == 200
+        assert r.json["total"] == 1
+        got = r.json["items"][0]
+        assert got["fullname"] == "t3_summary"
+        assert got["summary_text"] == "Short summary"
+        assert got["title_chars"] == 3
+        assert got["body_chars"] == 7
+        assert got["content_chars"] == 11
+        assert got["summary_chars"] == 13
+
 
 class TestExtractionsRecent:
     def test_lists(self, app_client, repo, make_item):
