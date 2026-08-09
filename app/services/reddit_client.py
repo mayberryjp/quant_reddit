@@ -304,40 +304,66 @@ class PlaywrightRedditSource:
         created_utc = 0.0
         num_comments = 0
 
+        # Try to extract from embedded reddit-page-data JSON first (most reliable)
         match = re.search(r'<reddit-page-data data="([^"]+)"', page_html)
         if match:
             try:
                 data = json.loads(html_module.unescape(match.group(1)))
-                # reddit-page-data currently stores the subreddit container.
-                # We keep this best-effort and fall back to rendered content.
-                subreddit_data = data.get("subreddit") if isinstance(data, dict) else None
-                if isinstance(subreddit_data, dict):
-                    author = str(subreddit_data.get("name") or None) or None
+                if isinstance(data, dict):
+                    # Try to get post data from the root
+                    post_data = data.get("post")
+                    if isinstance(post_data, dict):
+                        title = str(post_data.get("title") or "") or fallback_title
+                        body = str(post_data.get("selftext", post_data.get("body") or "")) or ""
+                    
+                    # Extract author from subreddit info
+                    subreddit_data = data.get("subreddit")
+                    if isinstance(subreddit_data, dict):
+                        author = str(subreddit_data.get("name") or None) or None
+                    
+                    # Extract score, comment count, and timestamps
+                    if isinstance(post_data, dict):
+                        if "score" in post_data:
+                            score = int(post_data.get("score") or 0)
+                        if "number_comments" in post_data:
+                            num_comments = int(post_data.get("number_comments") or 0)
+                        if "created_timestamp" in post_data:
+                            created_utc = float(post_data.get("created_timestamp") or 0)
             except Exception:  # noqa: BLE001
                 pass
 
-        body_match = re.search(r'"post"\s*:\s*\{.*?"title"\s*:\s*"(.*?)"', page_html)
-        if body_match:
-            title = html_module.unescape(body_match.group(1))
-
-        text_match = re.search(r'<article[\s\S]*?<p[^>]*>(.*?)</p>', page_html)
-        if text_match:
-            body = re.sub(r"<[^>]+>", "", text_match.group(1)).strip()
-
-        score_match = re.search(r'"score"\s*:\s*(\d+)', page_html)
-        if score_match:
-            score = int(score_match.group(1))
-
-        comments_match = re.search(r'"number_comments"\s*:\s*(\d+)', page_html)
-        if comments_match:
-            num_comments = int(comments_match.group(1))
-
-        created_match = re.search(r'"created_timestamp"\s*:\s*(\d+)', page_html)
-        if created_match:
-            created_utc = float(created_match.group(1))
-
+        # Fallback: extract from HTML if JSON parsing didn't work
+        if not title or title == fallback_title:
+            title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', page_html)
+            if title_match:
+                title = html_module.unescape(title_match.group(1)).strip()
+        
         if not body:
-            body = title
+            # Look for post body content in various HTML structures
+            text_match = re.search(r'<article[\s\S]*?<p[^>]*>(.*?)</p>', page_html)
+            if text_match:
+                body = re.sub(r"<[^>]+>", "", text_match.group(1)).strip()
+            else:
+                # Try div-based body extraction
+                div_match = re.search(r'<div[^>]*class="[^"]*post-content[^"]*"[^>]*>(.*?)</div>', page_html)
+                if div_match:
+                    body = re.sub(r"<[^>]+>", "", div_match.group(1)).strip()
+
+        # Extract metadata if not already found
+        if score == 0:
+            score_match = re.search(r'"score"\s*:\s*(\d+)', page_html)
+            if score_match:
+                score = int(score_match.group(1))
+
+        if num_comments == 0:
+            comments_match = re.search(r'"number_comments"\s*:\s*(\d+)', page_html)
+            if comments_match:
+                num_comments = int(comments_match.group(1))
+
+        if created_utc == 0.0:
+            created_match = re.search(r'"created_timestamp"\s*:\s*(\d+)', page_html)
+            if created_match:
+                created_utc = float(created_match.group(1))
 
         return title, body, author, score, created_utc, num_comments
 
