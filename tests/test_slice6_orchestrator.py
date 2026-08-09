@@ -55,7 +55,7 @@ class FakeLLM:
         return self.response
 
 
-def _post(pid, *, body="$GME to the moon", score=5, created=1_700_000_000.0) -> RawPost:
+def _post(pid, *, body=(("x" * 880) + " $GME to the moon"), score=5, created=1_700_000_000.0) -> RawPost:
     return RawPost(
         fullname=f"t3_{pid}",
         id=pid,

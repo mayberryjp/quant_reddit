@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # when it looks high-signal, to stay under Reddit's ~100 req/min budget.
     comment_min_score: int = 50
     comment_min_comments: int = 20
+    # Post text gating: skip posts whose title+body is shorter than this.
+    # For accepted posts, body is truncated to post_max_chars.
+    post_min_chars: int = 800
+    post_max_chars: int = 800
 
     # --- Emission sources / tuning ---------------------------------------
     signal_source: str = "reddit-wsb-v1"
@@ -118,6 +122,12 @@ def validate_config(s: Settings, database_url: str | None) -> list[str]:
             "REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set "
             "(required when REDDIT_SOURCE_MODE=praw)"
         )
+    if s.post_min_chars < 0:
+        problems.append("QUANT_REDDIT_POST_MIN_CHARS must be >= 0")
+    if s.post_max_chars <= 0:
+        problems.append("QUANT_REDDIT_POST_MAX_CHARS must be > 0")
+    if s.post_max_chars < s.post_min_chars:
+        problems.append("QUANT_REDDIT_POST_MAX_CHARS must be >= QUANT_REDDIT_POST_MIN_CHARS")
     for name, url in (
         ("QUANT_SIGNALS_URL", s.quant_signals_url),
         ("QUANT_SENTIMENT_URL", s.quant_sentiment_url),

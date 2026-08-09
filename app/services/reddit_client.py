@@ -472,14 +472,29 @@ def should_fetch_comments(post: RawPost) -> bool:
     return has_ticker_mention(f"{post.title}\n{post.body}")
 
 
+def _post_text_length(title: str, body: str) -> int:
+    return len((title or "") + (body or ""))
+
+
+def _should_ingest_post(title: str, body: str) -> bool:
+    return _post_text_length(title, body) >= settings.post_min_chars
+
+
+def _truncate_post_body(body: str) -> str:
+    if settings.post_max_chars > 0 and len(body) > settings.post_max_chars:
+        return body[: settings.post_max_chars]
+    return body
+
+
 def _post_to_item(post: RawPost, subreddit: str, fetched_at: datetime) -> RedditItem:
+    body = _truncate_post_body(post.body or "")
     return RedditItem(
         fullname=post.fullname,
         kind=RedditKind.post,
         subreddit=subreddit,
         author=post.author,
         title=post.title,
-        body=post.body,
+        body=body,
         score=post.score,
         permalink=post.permalink,
         parent_fullname=None,
@@ -540,6 +555,8 @@ def ingest_once(
     newest: RawPost | None = posts[0] if posts else None
 
     for post in posts:
+        if not _should_ingest_post(post.title or "", post.body or ""):
+            continue
         try:
             _, is_dup = repo.insert_item(_post_to_item(post, subreddit, fetched_at))
             if is_dup:

@@ -60,6 +60,8 @@ PostgreSQL holds an append-mostly audit + idempotency ledger.
 - `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`), `OLLAMA_MODEL` (default `llama3.1`).
 - `QUANT_SIGNALS_URL` (default `http://localhost:8016/signals`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017/sentiment`).
 - `QUANT_REDDIT_*` — tuning knobs (ingest/process interval, batch sizes, signal type, pagination).
+  - `QUANT_REDDIT_POST_MIN_CHARS` (default `800`): posts with combined title+body length below this are skipped.
+  - `QUANT_REDDIT_POST_MAX_CHARS` (default `800`): ingested post bodies are truncated to this length.
   See [.env.example](.env.example).
 
 ## Documentation

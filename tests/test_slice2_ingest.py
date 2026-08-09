@@ -14,6 +14,7 @@ from app.services.reddit_client import (
 )
 
 SUB = "wallstreetbets"
+LONG_BODY = "x" * 900
 
 
 def make_post(
@@ -22,7 +23,7 @@ def make_post(
     score=0,
     num_comments=0,
     title="daily discussion",
-    body="chatter",
+    body=LONG_BODY,
     created=1_700_000_000.0,
 ) -> RawPost:
     return RawPost(
@@ -134,7 +135,7 @@ class TestIngest:
             posts=[
                 make_post("hot", score=100),  # fetched (score)
                 make_post("boring", score=0, num_comments=0),  # skipped
-                make_post("ticker", score=0, body="yolo $TSLA"),  # fetched (ticker)
+                make_post("ticker", score=0, body=("x" * 890) + " $TSLA"),  # fetched (ticker)
             ],
             comments={
                 "hot": [make_comment("hc", parent="t3_hot")],
@@ -183,3 +184,24 @@ class TestIngest:
         assert post is not None
         # 2023-11-14T22:13:20Z; ensures milliseconds were converted to seconds.
         assert int(post.created_utc.timestamp()) == 1_700_000_000
+
+    def test_skips_posts_under_min_length(self, repo):
+        source = FakeRedditSource(posts=[make_post("short", body="too short")])
+        result = ingest_once(repo, source, subreddit=SUB)
+        assert result.posts_new == 0
+        assert repo.get_item("t3_short") is None
+
+    def test_accepts_post_when_title_and_body_meet_min_length(self, repo):
+        source = FakeRedditSource(
+            posts=[make_post("tb_len", title="t" * 790, body="b" * 20)]
+        )
+        result = ingest_once(repo, source, subreddit=SUB)
+        assert result.posts_new == 1
+        assert repo.get_item("t3_tb_len") is not None
+
+    def test_truncates_posts_to_max_length(self, repo):
+        source = FakeRedditSource(posts=[make_post("long", body="a" * 1200)])
+        ingest_once(repo, source, subreddit=SUB)
+        post = repo.get_item("t3_long")
+        assert post is not None
+        assert len(post.body) == 800
