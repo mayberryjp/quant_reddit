@@ -1,83 +1,56 @@
 # quant_reddit
 
-A **producer** service for the quant/algo platform. `quant_reddit` continuously reads
-posts and comments from Reddit's r/wallstreetbets, sends the text to a **local Ollama
-LLM** to distill structured investment signals, and emits two kinds of output to existing
-platform services:
-
-1. **Watchlist signals** → [`quant_signals`](https://github.com/mayberryjp/quant_signals) via `POST /signals`.
-2. **Sentiment observations** → [`quant_sentiment`](https://github.com/mayberryjp/quant_sentiment) via `POST /sentiment`.
-
-It is a producer/aggregator only: it does **not** manage the watchlist lifecycle, does
-**not** aggregate sentiment over time, and does **not** place trades. Its own datastore is
-an audit/idempotency ledger, not a system of record.
+`quant_reddit` is a source worker for the quant platform. It discovers Reddit posts
+and comments, persists the source records, submits each new item to the shared
+`quant_distill` `POST /v1/process` endpoint, and stores the exact request and complete
+response. Artifact generation and downstream delivery are owned by `quant_distill`.
 
 ## Quick Start
 
 ```bash
-# Run the full stack (API on :8018, PostgreSQL on :5432). Migrations run on start.
-docker compose up --build
-
-# Run the test suite (in-memory SQLite; no Docker/Postgres/Ollama needed)
 pip install -e ".[dev]"
+playwright install chromium
 pytest -v
 
-# If running scrape mode outside Docker, install Chromium for Playwright
-playwright install chromium
+# API on :8018 and PostgreSQL on :5432
+docker compose up --build
 ```
 
-## Architecture
+Set `QUANT_DISTILL_URL` to the distillation service base URL. Its default is
+`http://localhost:8021` outside Docker and `http://host.docker.internal:8021` in
+the included Compose example.
 
+## Flow
+
+```text
+Reddit -> reddit_items -> POST quant_distill /v1/process -> distillations
 ```
-ingest (Reddit) → distill (Ollama) → emit (signals + sentiment)
-```
 
-A supervisord-managed ingest worker fetches Reddit content and a separate process worker
-handles `distill → emit` from queued `new` items; a sibling Bottle API process serves
-health/readiness/stats and read endpoints.
-PostgreSQL holds an append-mostly audit + idempotency ledger.
+Supervisord runs separate ingestion, processing, and Bottle API processes. The
+processing worker uses bounded retries for network failures and HTTP `503`. An item
+is marked `distilled` only after its request and successful response are persisted.
 
-## API Endpoints
+## API
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/reddit/health` | Liveness (no DB dependency) |
-| GET | `/reddit/ready` | Readiness (DB + dependency reachability) |
-| GET | `/reddit/stats` | Operational counters |
-| GET | `/reddit/items/recent` | Recent ingested items (filters, pagination) |
-| GET | `/reddit/extractions/recent` | Recent LLM extractions |
-| GET | `/reddit/emissions/recent` | Recent downstream emissions |
+| GET | `/reddit/health` | Process liveness |
+| GET | `/reddit/ready` | Database readiness |
+| GET | `/reddit/stats` | Ingestion and distillation counters |
+| GET | `/reddit/items/recent` | Source records with filters and pagination |
+| GET | `/reddit/distillations/recent` | Stored requests and authoritative responses |
+| GET | `/reddit/runs/recent` | Ingest and process run history |
 
 ## Configuration
 
-- `DATABASE_URL` — PostgreSQL DSN (required in production).
-- `API_LISTEN_ADDRESS` (default `0.0.0.0`), `API_PORT` (default `8018`).
-- `REDDIT_SOURCE_MODE` — `auto` (default), `praw`, or `scrape`.
-  - `auto`: uses OAuth/PRAW when `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` are set; otherwise falls back to browser-backed scraping.
-  - `praw`: forces OAuth/PRAW and requires `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`.
-  - `scrape`: forces browser-backed scraping (Playwright Chromium).
-- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — used by PRAW mode; user-agent is always sent and should be descriptive.
-- `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`), `OLLAMA_MODEL` (default `llama3.1`).
-- `QUANT_SIGNALS_URL` (default `http://localhost:8016/signals`), `QUANT_SENTIMENT_URL` (default `http://localhost:8017/sentiment`).
-- `QUANT_REDDIT_*` — tuning knobs (ingest/process interval, batch sizes, signal type, pagination).
-  - `QUANT_REDDIT_POST_MIN_CHARS` (default `800`): posts with combined title+body length below this are skipped.
-  - `QUANT_REDDIT_POST_MAX_CHARS` (default `800`): ingested post bodies are truncated to this length.
-  See [.env.example](.env.example).
+- `DATABASE_URL`: PostgreSQL DSN.
+- `QUANT_DISTILL_URL`: `quant_distill` base URL; the client appends `/v1/process`.
+- `QUANT_REDDIT_DISTILL_TIMEOUT`: request timeout in seconds, default `180`.
+- `QUANT_REDDIT_HTTP_RETRIES`: total bounded attempts, default `3`.
+- `REDDIT_SOURCE_MODE`: `auto`, `praw`, or `scrape`.
+- `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`: PRAW settings.
+- `QUANT_REDDIT_INGEST_INTERVAL`, `QUANT_REDDIT_PROCESS_INTERVAL`: worker intervals.
+- `QUANT_REDDIT_POST_MIN_CHARS`, `QUANT_REDDIT_POST_MAX_CHARS`: source text limits.
 
-## Documentation
-
-- [Architecture](docs/architecture.md)
-- [Producer Mapping](docs/producer_mapping.md)
-- [Runbook](docs/runbook.md)
-
-## One-Time Data Repair
-
-If older scrape-mode rows contain `created_utc=1970-01-01T00:00:00Z`, run:
-
-```bash
-# Preview only
-python scripts/backfill_created_utc.py
-
-# Apply repair (sets created_utc=fetched_at for epoch-start rows)
-python scripts/backfill_created_utc.py --apply
-```
+See [architecture](docs/architecture.md), [request mapping](docs/producer_mapping.md),
+and the [runbook](docs/runbook.md).

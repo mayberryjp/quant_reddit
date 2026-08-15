@@ -1,9 +1,9 @@
-"""Repository for the reddit audit + idempotency ledger.
+"""Repository for Reddit source data, distillations, and worker run history.
 
 All statements use SQLAlchemy Core expression language (parameterized), so the
-same code runs against PostgreSQL (production) and SQLite (tests). The ledger is
-append-mostly: inserts are deduplicated by UNIQUE constraints; the only updates
-are ``reddit_items.process_state`` transitions and ``emission_log`` bookkeeping.
+same code runs against PostgreSQL (production) and SQLite (tests). Inserts are
+deduplicated by UNIQUE constraints; source processing state and cursors are the
+only mutable records.
 """
 
 from __future__ import annotations
@@ -17,19 +17,15 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.domain import (
     CycleRun,
-    EmissionRecord,
-    EmissionStatus,
-    EmissionTarget,
+    DistillationRecord,
     IngestCursor,
-    LlmExtraction,
     ProcessState,
     RedditItem,
 )
 from app.repository.schema import (
     cycle_runs,
-    emission_log,
+    distillations,
     ingest_cursor,
-    llm_extractions,
     reddit_items,
 )
 from app.timeutil import to_utc, utcnow
@@ -73,31 +69,15 @@ def _row_to_item(row) -> RedditItem:
     return RedditItem(**data)
 
 
-def _extraction_to_row(ex: LlmExtraction) -> dict:
-    return {
-        "reddit_fullname": ex.reddit_fullname,
-        "model": ex.model,
-        "prompt_version": ex.prompt_version,
-        "raw_response": ex.raw_response,
-        "extracted": [f.model_dump(mode="json") for f in ex.extracted],
-        "created_at": ex.created_at,
-        "schema_version": ex.schema_version,
-    }
+def _distillation_to_row(record: DistillationRecord) -> dict:
+    return record.model_dump(mode="python")
 
 
-def _row_to_extraction(row) -> LlmExtraction:
+def _row_to_distillation(row) -> DistillationRecord:
     data = dict(row)
     data.pop("id", None)
     data["created_at"] = to_utc(data.get("created_at"))
-    return LlmExtraction(**data)
-
-
-def _row_to_emission(row) -> EmissionRecord:
-    data = dict(row)
-    data.pop("id", None)
-    data["created_at"] = to_utc(data.get("created_at"))
-    data["updated_at"] = to_utc(data.get("updated_at"))
-    return EmissionRecord(**data)
+    return DistillationRecord(**data)
 
 
 def _row_to_cursor(row) -> IngestCursor:
@@ -179,123 +159,39 @@ class RedditRepository:
         return [_row_to_item(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # llm_extractions
+    # distillations
     # ------------------------------------------------------------------
-    def insert_extraction(self, ex: LlmExtraction) -> tuple[LlmExtraction, bool]:
-        """Persist an extraction. Dedup by ``(reddit_fullname, model, prompt_version)``."""
-        existing = self.get_extraction(ex.reddit_fullname, ex.model, ex.prompt_version)
+    def insert_distillation(
+        self, record: DistillationRecord
+    ) -> tuple[DistillationRecord, bool]:
+        """Persist one authoritative API result, deduplicated by source item."""
+        existing = self.get_distillation(record.reddit_fullname)
         if existing is not None:
             return existing, True
         try:
             with self.engine.begin() as conn:
-                conn.execute(sa.insert(llm_extractions).values(**_extraction_to_row(ex)))
+                conn.execute(
+                    sa.insert(distillations).values(**_distillation_to_row(record))
+                )
         except IntegrityError:
-            existing = self.get_extraction(
-                ex.reddit_fullname, ex.model, ex.prompt_version
-            )
+            existing = self.get_distillation(record.reddit_fullname)
             if existing is not None:
                 return existing, True
             raise
-        return ex, False
+        return record, False
 
-    def get_extraction(
-        self, reddit_fullname: str, model: str, prompt_version: str
-    ) -> LlmExtraction | None:
+    def get_distillation(self, reddit_fullname: str) -> DistillationRecord | None:
         with self.engine.connect() as conn:
             row = (
                 conn.execute(
-                    sa.select(llm_extractions).where(
-                        llm_extractions.c.reddit_fullname == reddit_fullname,
-                        llm_extractions.c.model == model,
-                        llm_extractions.c.prompt_version == prompt_version,
+                    sa.select(distillations).where(
+                        distillations.c.reddit_fullname == reddit_fullname
                     )
                 )
                 .mappings()
                 .first()
             )
-        return _row_to_extraction(row) if row is not None else None
-
-    # ------------------------------------------------------------------
-    # emission_log
-    # ------------------------------------------------------------------
-    def get_emission(
-        self, target: EmissionTarget | str, idempotency_key: str
-    ) -> EmissionRecord | None:
-        with self.engine.connect() as conn:
-            row = (
-                conn.execute(
-                    sa.select(emission_log).where(
-                        emission_log.c.target == _val(target),
-                        emission_log.c.idempotency_key == idempotency_key,
-                    )
-                )
-                .mappings()
-                .first()
-            )
-        return _row_to_emission(row) if row is not None else None
-
-    def record_emission(
-        self,
-        *,
-        target: EmissionTarget | str,
-        idempotency_key: str,
-        status: EmissionStatus | str,
-        ticker: str | None = None,
-        request: dict | None = None,
-        http_status: int | None = None,
-        response_id: str | None = None,
-    ) -> EmissionRecord:
-        """Insert or update an emission-log row keyed by ``(target, idempotency_key)``.
-
-        The first call inserts with ``attempts = 1``; subsequent calls update the
-        outcome and increment ``attempts``.
-        """
-        now = utcnow()
-        request = request or {}
-        with self.engine.begin() as conn:
-            existing = (
-                conn.execute(
-                    sa.select(emission_log.c.attempts).where(
-                        emission_log.c.target == _val(target),
-                        emission_log.c.idempotency_key == idempotency_key,
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if existing is None:
-                conn.execute(
-                    sa.insert(emission_log).values(
-                        target=_val(target),
-                        idempotency_key=idempotency_key,
-                        ticker=ticker,
-                        request=request,
-                        status=_val(status),
-                        http_status=http_status,
-                        response_id=response_id,
-                        attempts=1,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                )
-            else:
-                conn.execute(
-                    sa.update(emission_log)
-                    .where(
-                        emission_log.c.target == _val(target),
-                        emission_log.c.idempotency_key == idempotency_key,
-                    )
-                    .values(
-                        ticker=ticker,
-                        request=request,
-                        status=_val(status),
-                        http_status=http_status,
-                        response_id=response_id,
-                        attempts=existing["attempts"] + 1,
-                        updated_at=now,
-                    )
-                )
-        return self.get_emission(target, idempotency_key)
+        return _row_to_distillation(row) if row is not None else None
 
     # ------------------------------------------------------------------
     # ingest_cursor
@@ -390,76 +286,49 @@ class RedditRepository:
             )
         return [_row_to_item(r) for r in rows], int(total)
 
-    def latest_extraction_summaries(
+    def latest_distillation_summaries(
         self, reddit_fullnames: list[str]
     ) -> dict[str, dict]:
-        """Return latest extraction ``raw_response`` payloads keyed by fullname.
-
-        When multiple extractions exist for a fullname, the newest by
-        ``created_at DESC, id DESC`` is selected.
-        """
+        """Return authoritative distillation responses keyed by fullname."""
         if not reddit_fullnames:
             return {}
-
-        ranked = (
-            sa.select(
-                llm_extractions.c.reddit_fullname,
-                llm_extractions.c.raw_response,
-                sa.func.row_number()
-                .over(
-                    partition_by=llm_extractions.c.reddit_fullname,
-                    order_by=(
-                        llm_extractions.c.created_at.desc(),
-                        llm_extractions.c.id.desc(),
-                    ),
-                )
-                .label("rn"),
-            )
-            .where(llm_extractions.c.reddit_fullname.in_(reddit_fullnames))
-            .subquery()
-        )
-
         with self.engine.connect() as conn:
             rows = (
                 conn.execute(
-                    sa.select(ranked.c.reddit_fullname, ranked.c.raw_response).where(
-                        ranked.c.rn == 1
-                    )
+                    sa.select(distillations.c.reddit_fullname, distillations.c.response)
+                    .where(distillations.c.reddit_fullname.in_(reddit_fullnames))
                 )
                 .mappings()
                 .all()
             )
 
-        return {r["reddit_fullname"]: (r["raw_response"] or {}) for r in rows}
+        return {r["reddit_fullname"]: (r["response"] or {}) for r in rows}
 
-    def list_extractions(
+    def list_distillations(
         self,
         *,
-        model: str | None = None,
-        prompt_version: str | None = None,
+        request_id: str | None = None,
         reddit_fullname: str | None = None,
         page: int = 1,
         page_size: int = 25,
-    ) -> tuple[list[LlmExtraction], int]:
+    ) -> tuple[list[DistillationRecord], int]:
         conditions: list = []
-        if model:
-            conditions.append(llm_extractions.c.model == model)
-        if prompt_version:
-            conditions.append(llm_extractions.c.prompt_version == prompt_version)
+        if request_id:
+            conditions.append(distillations.c.request_id == request_id)
         if reddit_fullname:
-            conditions.append(llm_extractions.c.reddit_fullname == reddit_fullname)
+            conditions.append(distillations.c.reddit_fullname == reddit_fullname)
         where = sa.and_(*conditions) if conditions else sa.true()
         offset = max(page - 1, 0) * page_size
         with self.engine.connect() as conn:
             total = conn.execute(
-                sa.select(sa.func.count()).select_from(llm_extractions).where(where)
+                sa.select(sa.func.count()).select_from(distillations).where(where)
             ).scalar_one()
             rows = (
                 conn.execute(
-                    sa.select(llm_extractions)
+                    sa.select(distillations)
                     .where(where)
                     .order_by(
-                        llm_extractions.c.created_at.desc(), llm_extractions.c.id.desc()
+                        distillations.c.created_at.desc(), distillations.c.id.desc()
                     )
                     .limit(page_size)
                     .offset(offset)
@@ -467,42 +336,7 @@ class RedditRepository:
                 .mappings()
                 .all()
             )
-        return [_row_to_extraction(r) for r in rows], int(total)
-
-    def list_emissions(
-        self,
-        *,
-        target: str | None = None,
-        status: str | None = None,
-        ticker: str | None = None,
-        page: int = 1,
-        page_size: int = 25,
-    ) -> tuple[list[EmissionRecord], int]:
-        conditions: list = []
-        if target:
-            conditions.append(emission_log.c.target == target)
-        if status:
-            conditions.append(emission_log.c.status == status)
-        if ticker:
-            conditions.append(emission_log.c.ticker == ticker)
-        where = sa.and_(*conditions) if conditions else sa.true()
-        offset = max(page - 1, 0) * page_size
-        with self.engine.connect() as conn:
-            total = conn.execute(
-                sa.select(sa.func.count()).select_from(emission_log).where(where)
-            ).scalar_one()
-            rows = (
-                conn.execute(
-                    sa.select(emission_log)
-                    .where(where)
-                    .order_by(emission_log.c.created_at.desc(), emission_log.c.id.desc())
-                    .limit(page_size)
-                    .offset(offset)
-                )
-                .mappings()
-                .all()
-            )
-        return [_row_to_emission(r) for r in rows], int(total)
+        return [_row_to_distillation(r) for r in rows], int(total)
 
     def set_heartbeat(self) -> None:
         """Record a worker liveness heartbeat."""
@@ -536,34 +370,14 @@ class RedditRepository:
                     reddit_items.c.process_state
                 )
             ).all()
-            extractions_total = conn.execute(
-                sa.select(sa.func.count()).select_from(llm_extractions)
+            distillations_total = conn.execute(
+                sa.select(sa.func.count()).select_from(distillations)
             ).scalar_one()
-            emission_rows = conn.execute(
-                sa.select(
-                    emission_log.c.target,
-                    emission_log.c.status,
-                    sa.func.count(),
-                ).group_by(emission_log.c.target, emission_log.c.status)
-            ).all()
             last_fetched = conn.execute(
                 sa.select(sa.func.max(reddit_items.c.fetched_at))
             ).scalar()
 
         states = {state: int(n) for state, n in state_rows}
-        emissions: dict[str, dict[str, int]] = {"signals": {}, "sentiment": {}}
-        for target, status, n in emission_rows:
-            emissions.setdefault(target, {})[status] = int(n)
-
-        def _target(name: str) -> dict[str, int]:
-            got = emissions.get(name, {})
-            return {
-                "accepted": got.get("accepted", 0),
-                "duplicate": got.get("duplicate", 0),
-                "unresolved": got.get("unresolved", 0),
-                "failed": got.get("failed", 0),
-            }
-
         return {
             "items_ingested": int(items_total or 0),
             "items_by_state": {
@@ -572,8 +386,7 @@ class RedditRepository:
                 "skipped": states.get("skipped", 0),
                 "failed": states.get("failed", 0),
             },
-            "extractions": int(extractions_total or 0),
-            "emissions": {"signals": _target("signals"), "sentiment": _target("sentiment")},
+            "distillations": int(distillations_total or 0),
             "last_fetched_at": last_fetched,
         }
 

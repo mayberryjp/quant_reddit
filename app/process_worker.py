@@ -1,6 +1,6 @@
 """Process-only worker entry point (supervisord ``[program:process_worker]``).
 
-Consumes ``new`` ledger items, runs LLM distillation, and emits sentiment/signals.
+Consumes ``new`` ledger items and submits them to the shared distillation API.
 It does not fetch Reddit posts/comments.
 """
 
@@ -13,9 +13,7 @@ from app.config import log_config_problems, settings
 from app.db import get_engine
 from app.repository.postgres import RedditRepository
 from app.services import orchestrator
-from app.services.ollama_client import OllamaClient
-from app.services.sentiment_emitter import SentimentEmitter
-from app.services.signal_emitter import SignalEmitter
+from app.services.distill_client import DistillClient
 
 SERVICE_NAME = "quant-reddit-process-worker"
 log = logging.getLogger(SERVICE_NAME)
@@ -33,9 +31,7 @@ def main() -> None:
     repo = RedditRepository(get_engine())
     orchestrator.run_process_forever(
         repo,
-        llm_client=OllamaClient(),
-        sentiment_emitter=SentimentEmitter(repo),
-        signal_emitter=SignalEmitter(repo),
+        distill_client=DistillClient(),
         poll_interval=settings.process_interval,
     )
 

@@ -1,3 +1,3 @@
-"""Service layer for quant_reddit (Reddit, Ollama, emitters, orchestration)."""
+"""Reddit acquisition, distillation API client, and orchestration services."""
 
 from __future__ import annotations

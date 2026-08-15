@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quant_reddit"
 version = "0.1.0"
-description = "Reddit WallStreetBets → Ollama → watchlist signals + sentiment producer"
+description = "Reddit ingestion worker for the shared quant_distill API"
 requires-python = ">=3.12"
 dependencies = [
     "bottle>=0.12",

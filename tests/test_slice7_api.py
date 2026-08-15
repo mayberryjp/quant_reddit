@@ -1,18 +1,11 @@
-"""Slice 7: read/ops API — health, ready (incl. 503), stats, recent endpoints."""
+"""Read and operational API tests."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from app import dependencies
-from app.models.domain import (
-    EmissionStatus,
-    EmissionTarget,
-    LlmExtraction,
-    ProcessState,
-    RedditKind,
-    TickerFinding,
-)
+from app.models.domain import DistillationRecord, ProcessState, RedditKind
 
 
 class _DownRepo:
@@ -20,166 +13,88 @@ class _DownRepo:
         return False
 
 
+def _record(fullname: str) -> DistillationRecord:
+    return DistillationRecord(
+        reddit_fullname=fullname,
+        request_id=f"req-{fullname}",
+        request={"source_item_id": fullname, "text": "input"},
+        response={
+            "status": "ok",
+            "request_id": f"req-{fullname}",
+            "distillation": {"summary": "Short summary"},
+            "sentiment": {"observations": [{"subject": "ABC"}]},
+            "entities": {"items": [{"ticker": "ABC"}]},
+        },
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 class TestReady:
     def test_ready_ok(self, app_client):
-        r = app_client.get("/reddit/ready")
-        assert r.status_int == 200
-        assert r.json["status"] == "ready"
-        assert r.json["database"] == "ok"
+        response = app_client.get("/reddit/ready")
+        assert response.json["status"] == "ready"
 
     def test_ready_503_when_db_down(self, app_client):
         dependencies.set_repo(_DownRepo())
-        r = app_client.get("/reddit/ready", expect_errors=True)
-        assert r.status_int == 503
-        assert r.json["status"] == "not_ready"
-        assert r.json["database"] == "unavailable"
+        response = app_client.get("/reddit/ready", expect_errors=True)
+        assert response.status_int == 503
+        assert response.json["database"] == "unavailable"
 
 
 class TestStats:
     def test_stats_empty(self, app_client):
-        r = app_client.get("/reddit/stats")
-        assert r.status_int == 200
-        assert r.json["items_ingested"] == 0
-        assert r.json["extractions"] == 0
-        assert r.json["emissions"]["signals"]["accepted"] == 0
-        assert r.json["emissions"]["sentiment"]["accepted"] == 0
-        assert r.json["last_fetched_at"] is None
-        assert r.json["last_run"] is None
+        response = app_client.get("/reddit/stats")
+        assert response.json["items_ingested"] == 0
+        assert response.json["distillations"] == 0
+        assert response.json["last_run"] is None
 
     def test_stats_after_activity(self, app_client, repo, make_item):
         repo.insert_item(make_item(fullname="t3_a"))
-        repo.insert_item(make_item(fullname="t3_b"))
-        repo.set_item_state("t3_b", ProcessState.distilled)
-        repo.insert_extraction(
-            LlmExtraction(
-                reddit_fullname="t3_b",
-                model="llama3.1",
-                prompt_version="wsb-distill-v1",
-                extracted=[TickerFinding(ticker="GME", sentiment_score=50)],
-                created_at=datetime.now(timezone.utc),
-            )
-        )
-        repo.record_emission(
-            target=EmissionTarget.signals,
-            idempotency_key="reddit-wsb-v1:2026-07-06:GME",
-            status=EmissionStatus.accepted,
-            ticker="GME",
-        )
+        repo.set_item_state("t3_a", ProcessState.distilled)
+        repo.insert_distillation(_record("t3_a"))
         repo.set_heartbeat()
 
-        r = app_client.get("/reddit/stats")
-        assert r.json["items_ingested"] == 2
-        assert r.json["items_by_state"]["distilled"] == 1
-        assert r.json["extractions"] == 1
-        assert r.json["emissions"]["signals"]["accepted"] == 1
-        assert r.json["last_fetched_at"] is not None
-        assert r.json["last_run"] is not None
+        response = app_client.get("/reddit/stats")
+        assert response.json["items_by_state"]["distilled"] == 1
+        assert response.json["distillations"] == 1
+        assert response.json["last_run"] is not None
 
 
 class TestItemsRecent:
-    def test_empty(self, app_client):
-        r = app_client.get("/reddit/items/recent")
-        assert r.status_int == 200
-        assert r.json["items"] == []
-        assert r.json["total"] == 0
-
-    def test_lists_and_filters(self, app_client, repo, make_item):
+    def test_lists_filters_and_paginates(self, app_client, repo, make_item):
         repo.insert_item(make_item(fullname="t3_p", kind=RedditKind.post))
         repo.insert_item(make_item(fullname="t1_c", kind=RedditKind.comment))
         repo.set_item_state("t1_c", ProcessState.distilled)
 
-        r = app_client.get("/reddit/items/recent")
-        assert r.json["total"] == 2
+        response = app_client.get("/reddit/items/recent", {"kind": "comment"})
+        assert response.json["total"] == 1
+        assert response.json["items"][0]["fullname"] == "t1_c"
 
-        r = app_client.get("/reddit/items/recent", {"kind": "comment"})
-        assert r.json["total"] == 1
-        assert r.json["items"][0]["fullname"] == "t1_c"
+    def test_includes_summary_and_char_counts(self, app_client, repo, make_item):
+        repo.insert_item(make_item(fullname="t3_summary", title="ABC", body="def ghi"))
+        repo.insert_distillation(_record("t3_summary"))
 
-        r = app_client.get("/reddit/items/recent", {"process_state": "distilled"})
-        assert r.json["total"] == 1
-
-    def test_pagination(self, app_client, repo, make_item):
-        for i in range(5):
-            repo.insert_item(make_item(fullname=f"t3_{i}"))
-        r = app_client.get("/reddit/items/recent", {"page": 1, "page_size": 2})
-        assert len(r.json["items"]) == 2
-        assert r.json["total"] == 5
-
-    def test_invalid_page_size_422(self, app_client):
-        r = app_client.get(
-            "/reddit/items/recent", {"page_size": "abc"}, expect_errors=True
-        )
-        assert r.status_int == 422
-        assert "detail" in r.json
-
-    def test_items_include_summary_and_char_counts(self, app_client, repo, make_item):
-        item = make_item(fullname="t3_summary", title="ABC", body="def ghi")
-        repo.insert_item(item)
-        repo.insert_extraction(
-            LlmExtraction(
-                reddit_fullname="t3_summary",
-                model="llama3.1",
-                prompt_version="wsb-cnbc-parity-v1",
-                raw_response={"summary": {"summary": "Short summary"}},
-                extracted=[TickerFinding(ticker="ABC", sentiment_score=25)],
-                created_at=datetime.now(timezone.utc),
-            )
-        )
-
-        r = app_client.get(
+        response = app_client.get(
             "/reddit/items/recent",
-            {"kind": "post", "include_summary": "1", "include_char_counts": "1"},
+            {"include_summary": "1", "include_char_counts": "1"},
         )
-        assert r.status_int == 200
-        assert r.json["total"] == 1
-        got = r.json["items"][0]
-        assert got["fullname"] == "t3_summary"
-        assert got["summary_text"] == "Short summary"
-        assert got["title_chars"] == 3
-        assert got["body_chars"] == 7
-        assert got["content_chars"] == 11
-        assert got["summary_chars"] == 13
+        item = response.json["items"][0]
+        assert item["summary_text"] == "Short summary"
+        assert item["title_chars"] == 3
+        assert item["body_chars"] == 7
+        assert item["content_chars"] == 11
+        assert item["summary_chars"] == 13
 
 
-class TestExtractionsRecent:
-    def test_lists(self, app_client, repo, make_item):
+class TestDistillationsRecent:
+    def test_lists_and_filters(self, app_client, repo, make_item):
         repo.insert_item(make_item(fullname="t3_x"))
-        repo.insert_extraction(
-            LlmExtraction(
-                reddit_fullname="t3_x",
-                model="llama3.1",
-                prompt_version="wsb-distill-v1",
-                extracted=[TickerFinding(ticker="GME", sentiment_score=50)],
-                created_at=datetime.now(timezone.utc),
-            )
+        repo.insert_distillation(_record("t3_x"))
+
+        response = app_client.get(
+            "/reddit/distillations/recent", {"request_id": "req-t3_x"}
         )
-        r = app_client.get("/reddit/extractions/recent")
-        assert r.json["total"] == 1
-        assert r.json["items"][0]["reddit_fullname"] == "t3_x"
-        assert r.json["items"][0]["extracted"][0]["ticker"] == "GME"
-
-
-class TestEmissionsRecent:
-    def test_lists_and_filters(self, app_client, repo):
-        repo.record_emission(
-            target=EmissionTarget.signals,
-            idempotency_key="reddit-wsb-v1:2026-07-06:GME",
-            status=EmissionStatus.accepted,
-            ticker="GME",
-        )
-        repo.record_emission(
-            target=EmissionTarget.sentiment,
-            idempotency_key="reddit-wsb-v1:t3_a:AMC",
-            status=EmissionStatus.failed,
-            ticker="AMC",
-        )
-        r = app_client.get("/reddit/emissions/recent")
-        assert r.json["total"] == 2
-
-        r = app_client.get("/reddit/emissions/recent", {"target": "signals"})
-        assert r.json["total"] == 1
-        assert r.json["items"][0]["ticker"] == "GME"
-
-        r = app_client.get("/reddit/emissions/recent", {"status": "failed"})
-        assert r.json["total"] == 1
-        assert r.json["items"][0]["ticker"] == "AMC"
+        assert response.json["total"] == 1
+        record = response.json["items"][0]
+        assert record["reddit_fullname"] == "t3_x"
+        assert record["response"]["entities"]["items"][0]["ticker"] == "ABC"

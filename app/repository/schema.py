@@ -1,13 +1,12 @@
-"""Authoritative SQLAlchemy Core table definitions for the reddit audit ledger.
+"""Authoritative SQLAlchemy Core tables for Reddit ingestion and distillation.
 
 These tables are the single source of truth used by the repository. In production
 they map onto the PostgreSQL ``reddit`` schema created by Alembic migration
 ``0001_reddit``. In tests they are created on SQLite via ``metadata.create_all``
 with a schema-translate map, so identical code paths exercise both backends.
 
-The ledger is *append-mostly*: rows are inserted once and deduplicated by UNIQUE
-constraints. The only mutations are ``reddit_items.process_state`` transitions and
-``emission_log`` attempt bookkeeping.
+Rows are append-mostly and deduplicated by UNIQUE constraints. The only mutations
+are source processing-state transitions and ingestion cursor updates.
 """
 
 from __future__ import annotations
@@ -54,8 +53,8 @@ reddit_items = sa.Table(
     sa.Index("ix_reddit_items_fetched", "fetched_at"),
 )
 
-llm_extractions = sa.Table(
-    "llm_extractions",
+distillations = sa.Table(
+    "distillations",
     metadata,
     _id_column(),
     sa.Column(
@@ -63,37 +62,15 @@ llm_extractions = sa.Table(
         sa.Text,
         sa.ForeignKey(reddit_items.c.fullname),
         nullable=False,
+        unique=True,
     ),
-    sa.Column("model", sa.Text, nullable=False),
-    sa.Column("prompt_version", sa.Text, nullable=False),
-    sa.Column("raw_response", JSON_VARIANT, nullable=False),
-    sa.Column("extracted", JSON_VARIANT, nullable=False),
+    sa.Column("request_id", sa.Text, nullable=False),
+    sa.Column("request", JSON_VARIANT, nullable=False),
+    sa.Column("response", JSON_VARIANT, nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("schema_version", sa.Integer, nullable=False, server_default="1"),
-    sa.UniqueConstraint(
-        "reddit_fullname", "model", "prompt_version", name="uq_reddit_extraction"
-    ),
-    sa.Index("ix_reddit_extractions_created", "created_at"),
-)
-
-emission_log = sa.Table(
-    "emission_log",
-    metadata,
-    _id_column(),
-    sa.Column("target", sa.Text, nullable=False),
-    sa.Column("idempotency_key", sa.Text, nullable=False),
-    sa.Column("ticker", sa.Text, nullable=True),
-    sa.Column("request", JSON_VARIANT, nullable=False),
-    sa.Column("status", sa.Text, nullable=False),
-    sa.Column("http_status", sa.Integer, nullable=True),
-    sa.Column("response_id", sa.Text, nullable=True),
-    sa.Column("attempts", sa.Integer, nullable=False, server_default="1"),
-    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-    sa.UniqueConstraint("target", "idempotency_key", name="uq_reddit_emission"),
-    sa.Index("ix_reddit_emission_target", "target", "status"),
-    sa.Index("ix_reddit_emission_ticker", "ticker"),
-    sa.Index("ix_reddit_emission_created", "created_at"),
+    sa.Index("ix_reddit_distillations_created", "created_at"),
+    sa.Index("ix_reddit_distillations_request_id", "request_id"),
 )
 
 ingest_cursor = sa.Table(

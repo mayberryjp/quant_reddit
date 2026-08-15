@@ -43,8 +43,7 @@ def stats():
     return {
         "items_ingested": data["items_ingested"],
         "items_by_state": data["items_by_state"],
-        "extractions": data["extractions"],
-        "emissions": data["emissions"],
+        "distillations": data["distillations"],
         "last_fetched_at": last_fetched.isoformat() if last_fetched else None,
         "last_run": heartbeat.isoformat() if heartbeat else None,
     }

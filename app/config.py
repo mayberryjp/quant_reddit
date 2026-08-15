@@ -2,8 +2,8 @@
 
 Tunable knobs load from environment variables using the ``QUANT_REDDIT_`` prefix.
 ``DATABASE_URL`` is read directly (unprefixed) in :mod:`app.db`. External vendor
-credentials and sibling-service URLs (Reddit, Ollama, ``quant_signals``,
-``quant_sentiment``) are also read unprefixed via explicit validation aliases —
+credentials and the shared distillation API URL are also read unprefixed via
+explicit validation aliases —
 mirroring the sibling ``quant_daily_bars`` service, which reads ``MASSIVE_API_KEY``
 unprefixed.
 """
@@ -42,18 +42,9 @@ class Settings(BaseSettings):
         default="https://www.reddit.com", validation_alias="REDDIT_HTTP_BASE_URL"
     )
 
-    # --- Ollama (read unprefixed) ----------------------------------------
-    ollama_base_url: str = Field(
-        default="http://localhost:11434/v1", validation_alias="OLLAMA_BASE_URL"
-    )
-    ollama_model: str = Field(default="llama3.1", validation_alias="OLLAMA_MODEL")
-
-    # --- Downstream services (read unprefixed) ---------------------------
-    quant_signals_url: str = Field(
-        default="http://localhost:8016/signals", validation_alias="QUANT_SIGNALS_URL"
-    )
-    quant_sentiment_url: str = Field(
-        default="http://localhost:8017/sentiment", validation_alias="QUANT_SENTIMENT_URL"
+    # --- Shared processing service (read unprefixed) ---------------------
+    quant_distill_url: str = Field(
+        default="http://localhost:8021", validation_alias="QUANT_DISTILL_URL"
     )
 
     # --- Reddit ingestion (QUANT_REDDIT_ prefix) -------------------------
@@ -73,23 +64,9 @@ class Settings(BaseSettings):
     post_min_chars: int = 800
     post_max_chars: int = 800
 
-    # --- Emission sources / tuning ---------------------------------------
-    signal_source: str = "reddit-wsb-v1"
-    watchlist_signal_type: str = "cnbc_mention"
-    sentiment_source: str = "reddit-wsb-v1"
-    # Producer reliability weight [0,1] sent on each sentiment observation.
-    source_weight: float = 0.5
-
-    # --- Score bounds ----------------------------------------------------
-    score_min: float = -100.0
-    score_max: float = 100.0
-
-    # --- Downstream / Ollama HTTP ----------------------------------------
-    http_timeout: float = 30.0
+    # --- Distillation HTTP ------------------------------------------------
+    distill_timeout: float = 180.0
     http_retries: int = 3
-
-    # --- Validation limits -----------------------------------------------
-    max_reason_length: int = 2000
 
     # --- Read pagination -------------------------------------------------
     default_page_size: int = 25
@@ -129,9 +106,7 @@ def validate_config(s: Settings, database_url: str | None) -> list[str]:
     if s.post_max_chars < s.post_min_chars:
         problems.append("QUANT_REDDIT_POST_MAX_CHARS must be >= QUANT_REDDIT_POST_MIN_CHARS")
     for name, url in (
-        ("QUANT_SIGNALS_URL", s.quant_signals_url),
-        ("QUANT_SENTIMENT_URL", s.quant_sentiment_url),
-        ("OLLAMA_BASE_URL", s.ollama_base_url),
+        ("QUANT_DISTILL_URL", s.quant_distill_url),
         ("REDDIT_HTTP_BASE_URL", s.reddit_http_base_url),
     ):
         if not (url.startswith("http://") or url.startswith("https://")):

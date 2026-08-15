@@ -1,4 +1,4 @@
-"""quant_reddit — Reddit WallStreetBets → Ollama → watchlist signals + sentiment."""
+"""quant_reddit: Reddit ingestion worker for the shared quant_distill API."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Read endpoints for the reddit ledger (Slice 7).
 
-``/reddit/items/recent``, ``/reddit/extractions/recent`` and
-``/reddit/emissions/recent`` return newest-first pages with optional filters.
+``/reddit/items/recent`` and ``/reddit/distillations/recent`` return newest-first
+pages with optional filters.
 """
 
 from __future__ import annotations
@@ -44,10 +44,10 @@ def _flag(name: str) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _extract_summary_text(raw_response: dict | None) -> str | None:
-    if not isinstance(raw_response, dict):
+def _extract_summary_text(api_response: dict | None) -> str | None:
+    if not isinstance(api_response, dict):
         return None
-    summary_payload = raw_response.get("summary")
+    summary_payload = api_response.get("distillation")
     if isinstance(summary_payload, dict):
         summary_text = summary_payload.get("summary")
         if isinstance(summary_text, str) and summary_text.strip():
@@ -73,8 +73,6 @@ def _char_counts(title: str | None, body: str | None, summary: str | None) -> di
 
 _ITEM_KINDS = {"post", "comment"}
 _PROCESS_STATES = {"new", "distilled", "skipped", "failed"}
-_TARGETS = {"signals", "sentiment"}
-_STATUSES = {"accepted", "duplicate", "unresolved", "failed"}
 _RUN_TYPES = {"ingest", "process", "full"}
 
 
@@ -102,7 +100,7 @@ def items_recent():
     if include_summary or include_char_counts:
         repo = get_repo()
         fullnames = [i.fullname for i in items]
-        summaries = repo.latest_extraction_summaries(fullnames)
+        summaries = repo.latest_distillation_summaries(fullnames)
         for item_model, payload in zip(items, payload_items):
             summary_text = _extract_summary_text(summaries.get(item_model.fullname))
             if include_summary:
@@ -120,36 +118,17 @@ def items_recent():
     }
 
 
-@sub.get("/reddit/extractions/recent")
-def extractions_recent():
+@sub.get("/reddit/distillations/recent")
+def distillations_recent():
     page, page_size = _page_params()
-    items, total = get_repo().list_extractions(
-        model=_param("model"),
-        prompt_version=_param("prompt_version"),
+    items, total = get_repo().list_distillations(
+        request_id=_param("request_id"),
         reddit_fullname=_param("reddit_fullname"),
         page=page,
         page_size=page_size,
     )
     return {
         "items": [e.model_dump(mode="json") for e in items],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
-
-
-@sub.get("/reddit/emissions/recent")
-def emissions_recent():
-    page, page_size = _page_params()
-    items, total = get_repo().list_emissions(
-        target=_choice("target", _TARGETS),
-        status=_choice("status", _STATUSES),
-        ticker=_param("ticker"),
-        page=page,
-        page_size=page_size,
-    )
-    return {
-        "items": [r.model_dump(mode="json") for r in items],
         "total": total,
         "page": page,
         "page_size": page_size,

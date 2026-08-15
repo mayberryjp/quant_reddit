@@ -1,36 +1,19 @@
-"""Slice 6: orchestration worker end-to-end with all externals stubbed."""
+"""Ingest-to-distillation orchestration tests with external APIs mocked."""
 
 from __future__ import annotations
 
 import json
-from datetime import date
 
 import httpx
 import respx
 
+from app.models.domain import ProcessState
+from app.services.distill_client import DistillClient
 from app.services.orchestrator import HEARTBEAT_KEY, run_cycle, run_forever
 from app.services.reddit_client import RawPost
-from app.services.sentiment_emitter import SentimentEmitter
-from app.services.signal_emitter import SignalEmitter
 
-SENTIMENT_BASE = "http://sentiment.test:8017/sentiment"
-SIGNALS_BASE = "http://signals.test:8016/signals"
-DAY = date(2026, 7, 6)
-
-GME_FINDINGS = json.dumps(
-    {
-        "findings": [
-            {
-                "ticker": "GME",
-                "sentiment_score": 80,
-                "direction": "long",
-                "confidence": 0.9,
-                "is_watchlist_candidate": True,
-                "rationale": "squeeze",
-            }
-        ]
-    }
-)
+BASE_URL = "http://distill.test:8021"
+PROCESS_URL = f"{BASE_URL}/v1/process"
 
 
 class FakeSource:
@@ -45,17 +28,7 @@ class FakeSource:
         return list(self._comments.get(post_id, [])[:limit])
 
 
-class FakeLLM:
-    def __init__(self, response):
-        self.response = response
-        self.calls = 0
-
-    def chat(self, system, user):
-        self.calls += 1
-        return self.response
-
-
-def _post(pid, *, body=(("x" * 880) + " $GME to the moon"), score=5, created=1_700_000_000.0) -> RawPost:
+def _post(pid, *, body=("x" * 880), score=5, created=1_700_000_000.0) -> RawPost:
     return RawPost(
         fullname=f"t3_{pid}",
         id=pid,
@@ -69,122 +42,93 @@ def _post(pid, *, body=(("x" * 880) + " $GME to the moon"), score=5, created=1_7
     )
 
 
-def _emitters(repo):
-    se = SentimentEmitter(
-        repo, base_url=SENTIMENT_BASE, source="reddit-wsb-v1", source_weight=0.5, retries=1, backoff=0
-    )
-    sig = SignalEmitter(
-        repo,
-        base_url=SIGNALS_BASE,
-        source="reddit-wsb-v1",
-        retries=1,
-        backoff=0,
-    )
-    return se, sig
+def _api_response(source_item_id: str) -> dict:
+    return {
+        "status": "ok",
+        "request_id": f"req-{source_item_id}",
+        "service": "quant-distill-api",
+        "source": {
+            "source": "quant_reddit",
+            "source_type": "reddit",
+            "source_item_id": source_item_id,
+        },
+        "processing": {"model": "llama3.1", "warnings": []},
+        "distillation": {"summary": f"summary for {source_item_id}"},
+        "sentiment": {"observations": [{"subject": "GME"}]},
+        "entities": {"items": [{"ticker": "GME"}]},
+    }
+
+
+def _mock_success(request: httpx.Request) -> httpx.Response:
+    source_item_id = json.loads(request.content)["source_item_id"]
+    return httpx.Response(200, json=_api_response(source_item_id))
 
 
 class TestFullCycle:
     @respx.mock
-    def test_cycle_then_idempotent_rerun(self, repo):
-        respx.post(SENTIMENT_BASE).mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
-        )
-        respx.post(SIGNALS_BASE).mock(
-            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
-        )
+    def test_cycle_persists_full_response_then_skips_duplicates(self, repo):
+        route = respx.post(PROCESS_URL).mock(side_effect=_mock_success)
         source = FakeSource(posts=[_post(f"p{i}") for i in range(4)])
-        llm = FakeLLM(GME_FINDINGS)
-        se, sig = _emitters(repo)
+        client = DistillClient(base_url=BASE_URL, retries=1)
 
-        r1 = run_cycle(
+        first = run_cycle(
             repo,
             reddit_source=source,
-            llm_client=llm,
-            sentiment_emitter=se,
-            signal_emitter=sig,
+            distill_client=client,
             subreddits=["wallstreetbets"],
-            day=DAY,
         )
-        assert r1.ingest.posts_new == 4
-        assert r1.items_distilled == 4
-        assert r1.findings == 4
-        assert r1.sentiment_emitted == 4
-        assert r1.signals_emitted == 4
 
-        stats = repo.stats()
-        assert stats["emissions"]["sentiment"]["accepted"] == 4
-        assert stats["emissions"]["signals"]["accepted"] == 4
-        assert stats["items_by_state"]["distilled"] == 4
+        assert first.ingest.posts_new == 4
+        assert first.items_distilled == 4
+        assert first.items_failed == 0
+        assert route.call_count == 4
+        stored = repo.get_distillation("t3_p0")
+        assert stored.request["text"] == "x" * 800
+        assert stored.response["distillation"]["summary"] == "summary for t3_p0"
+        assert stored.response["sentiment"]["observations"][0]["subject"] == "GME"
+        assert stored.response["entities"]["items"][0]["ticker"] == "GME"
         assert repo.get_cursor(HEARTBEAT_KEY) is not None
 
-        # Re-run with the same source: ingest yields only duplicates; nothing new.
-        calls_before = llm.calls
-        r2 = run_cycle(
+        second = run_cycle(
             repo,
             reddit_source=source,
-            llm_client=llm,
-            sentiment_emitter=se,
-            signal_emitter=sig,
+            distill_client=client,
             subreddits=["wallstreetbets"],
-            day=DAY,
         )
-        assert r2.ingest.posts_new == 0
-        assert r2.ingest.posts_duplicate == 4
-        assert r2.items_distilled == 0
-        assert r2.findings == 0
-        assert r2.sentiment_emitted == 0
-        assert r2.signals_emitted == 0
-        assert llm.calls == calls_before  # no new LLM calls on re-run
 
-        stats2 = repo.stats()
-        assert stats2["emissions"]["sentiment"]["accepted"] == 4  # unchanged
-        assert stats2["emissions"]["signals"]["accepted"] == 4  # unchanged
+        assert second.ingest.posts_duplicate == 4
+        assert second.items_distilled == 0
+        assert route.call_count == 4
 
     @respx.mock
-    def test_per_finding_emits_without_threshold_gating(self, repo):
-        respx.post(SENTIMENT_BASE).mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
+    def test_api_failure_marks_item_failed(self, repo):
+        respx.post(PROCESS_URL).mock(
+            return_value=httpx.Response(503, json={"status": "error", "detail": "down"})
         )
-        signals_route = respx.post(SIGNALS_BASE).mock(
-            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
-        )
-        # Two mentions still yield two signal submissions under per-finding parity.
-        source = FakeSource(posts=[_post(f"p{i}") for i in range(2)])
-        se, sig = _emitters(repo)
-        r = run_cycle(
+
+        result = run_cycle(
             repo,
-            reddit_source=source,
-            llm_client=FakeLLM(GME_FINDINGS),
-            sentiment_emitter=se,
-            signal_emitter=sig,
+            reddit_source=FakeSource(posts=[_post("failed")]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
             subreddits=["wallstreetbets"],
-            day=DAY,
         )
-        assert r.sentiment_emitted == 2
-        assert r.signals_emitted == 2
-        assert signals_route.call_count == 2
+
+        assert result.items_failed == 1
+        assert repo.get_item("t3_failed").process_state is ProcessState.failed
+        assert repo.get_distillation("t3_failed") is None
 
 
 class TestRunForever:
     @respx.mock
     def test_run_once_drives_a_cycle(self, repo):
-        respx.post(SENTIMENT_BASE).mock(
-            return_value=httpx.Response(201, json={"status": "accepted", "sentiment_id": "obs"})
-        )
-        respx.post(SIGNALS_BASE).mock(
-            return_value=httpx.Response(201, json={"signal_cache_id": "sig"})
-        )
-        source = FakeSource(posts=[_post(f"p{i}") for i in range(3)])
-        se, sig = _emitters(repo)
+        respx.post(PROCESS_URL).mock(side_effect=_mock_success)
         run_forever(
             repo,
-            reddit_source=source,
-            llm_client=FakeLLM(GME_FINDINGS),
-            sentiment_emitter=se,
-            signal_emitter=sig,
+            reddit_source=FakeSource(posts=[_post(f"p{i}") for i in range(3)]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
             run_once=True,
             subreddits=["wallstreetbets"],
-            day=DAY,
         )
+
         assert repo.stats()["items_ingested"] == 3
         assert repo.get_cursor(HEARTBEAT_KEY) is not None

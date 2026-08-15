@@ -26,24 +26,6 @@ class ProcessState(str, enum.Enum):
     failed = "failed"
 
 
-class Direction(str, enum.Enum):
-    long = "long"
-    short = "short"
-    neutral = "neutral"
-
-
-class EmissionTarget(str, enum.Enum):
-    signals = "signals"
-    sentiment = "sentiment"
-
-
-class EmissionStatus(str, enum.Enum):
-    accepted = "accepted"
-    duplicate = "duplicate"
-    unresolved = "unresolved"
-    failed = "failed"
-
-
 def _ensure_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -75,62 +57,19 @@ class RedditItem(BaseModel):
         return _ensure_utc(value)
 
 
-class TickerFinding(BaseModel):
-    """One ticker mention distilled from a single Reddit item by the LLM.
+class DistillationRecord(BaseModel):
+    """Exact request and authoritative response for one processed Reddit item."""
 
-    This is the validated shape of each element of ``llm_extractions.extracted``.
-    """
-
-    ticker: str = Field(..., min_length=1, max_length=16)
-    sentiment_score: float = Field(..., ge=-100.0, le=100.0)
-    direction: Direction = Direction.neutral
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    is_watchlist_candidate: bool = False
-    rationale: str = ""
-    # cnbc-style pass metadata (optional in reddit flow)
-    subject_type: str = "ticker"
-    sentiment_label: str | None = None
-    horizon: str | None = None
-    raw_mention: str | None = None
-    company_name: str | None = None
-    speaker: str | None = None
-    context: str | None = None
-
-
-class LlmExtraction(BaseModel):
-    """Structured LLM output for a single Reddit item."""
-
-    reddit_fullname: str
-    model: str
-    prompt_version: str
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-    extracted: list[TickerFinding] = Field(default_factory=list)
+    reddit_fullname: str = Field(..., min_length=1)
+    request_id: str = Field(..., min_length=1)
+    request: dict[str, Any]
+    response: dict[str, Any]
     created_at: datetime
     schema_version: int = 1
 
     @field_validator("created_at", mode="after")
     @classmethod
     def _utc(cls, value: datetime) -> datetime:
-        return _ensure_utc(value)
-
-
-class EmissionRecord(BaseModel):
-    """One downstream POST attempt recorded in ``emission_log``."""
-
-    target: EmissionTarget
-    idempotency_key: str
-    ticker: str | None = None
-    request: dict[str, Any] = Field(default_factory=dict)
-    status: EmissionStatus
-    http_status: int | None = None
-    response_id: str | None = None
-    attempts: int = 1
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-    @field_validator("created_at", "updated_at", mode="after")
-    @classmethod
-    def _utc(cls, value: datetime | None) -> datetime | None:
         return _ensure_utc(value)
 
 

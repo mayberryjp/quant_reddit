@@ -1,7 +1,7 @@
 """Ingest-only worker entry point (supervisord ``[program:ingest_worker]``).
 
-Fetches Reddit posts/comments and persists them into the ledger. It does not run
-LLM distillation or downstream emission.
+Fetches Reddit posts/comments and persists them into the ledger. It does not call
+the shared distillation API.
 """
 
 from __future__ import annotations

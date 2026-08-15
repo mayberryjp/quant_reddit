@@ -21,21 +21,9 @@ class TestReadValidation:
         r = app_client.get("/reddit/items/recent", {"kind": "post"})
         assert r.status_int == 200
 
-    def test_invalid_target_422(self, app_client):
-        r = app_client.get(
-            "/reddit/emissions/recent", {"target": "email"}, expect_errors=True
-        )
-        assert r.status_int == 422
-
-    def test_invalid_status_422(self, app_client):
-        r = app_client.get(
-            "/reddit/emissions/recent", {"status": "maybe"}, expect_errors=True
-        )
-        assert r.status_int == 422
-
     def test_invalid_page_size_422(self, app_client):
         r = app_client.get(
-            "/reddit/extractions/recent", {"page_size": "lots"}, expect_errors=True
+            "/reddit/distillations/recent", {"page_size": "lots"}, expect_errors=True
         )
         assert r.status_int == 422
 
@@ -78,17 +66,17 @@ class TestConfigValidation:
         problems = validate_config(Settings(), database_url="postgresql+psycopg://x/y")
         assert any("REDDIT_SOURCE_MODE" in p for p in problems)
 
-    def test_non_http_downstream_url_reported(self, monkeypatch):
+    def test_non_http_distill_url_reported(self, monkeypatch):
         monkeypatch.setenv("REDDIT_CLIENT_ID", "cid")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
-        monkeypatch.setenv("QUANT_SIGNALS_URL", "ftp://not-http")
+        monkeypatch.setenv("QUANT_DISTILL_URL", "ftp://not-http")
         problems = validate_config(Settings(), database_url="postgresql+psycopg://x/y")
-        assert any("QUANT_SIGNALS_URL" in p for p in problems)
+        assert any("QUANT_DISTILL_URL" in p for p in problems)
 
     def test_secrets_not_leaked_in_messages(self, monkeypatch):
         # A secret value must never appear in a validation message.
         monkeypatch.setenv("REDDIT_CLIENT_ID", "cid")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "super-secret-value")
-        monkeypatch.setenv("QUANT_SENTIMENT_URL", "ftp://bad")
+        monkeypatch.setenv("QUANT_DISTILL_URL", "ftp://bad")
         problems = validate_config(Settings(), database_url="db")
         assert all("super-secret-value" not in p for p in problems)
