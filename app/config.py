@@ -49,7 +49,10 @@ class Settings(BaseSettings):
 
     # --- Reddit ingestion (QUANT_REDDIT_ prefix) -------------------------
     # Comma-separated list: QUANT_REDDIT_SUBREDDITS=wallstreetbets,stocks,investing
-    subreddits: list[str] = ["wallstreetbets"]
+    # Kept as a raw string so pydantic-settings does not try to JSON-decode it.
+    subreddits_raw: str = Field(
+        default="wallstreetbets", validation_alias="QUANT_REDDIT_SUBREDDITS"
+    )
     post_batch: int = 50
     comments_per_post: int = 50
     poll_interval: int = 300
@@ -73,6 +76,10 @@ class Settings(BaseSettings):
     max_page_size: int = 100
 
     model_config = SettingsConfigDict(env_prefix="QUANT_REDDIT_", extra="ignore")
+
+    @property
+    def subreddits(self) -> list[str]:
+        return [s.strip() for s in self.subreddits_raw.split(",") if s.strip()]
 
 
 settings = Settings()
