@@ -30,6 +30,24 @@ def _record(fullname: str) -> DistillationRecord:
 
 
 class TestReady:
+    def test_cors_headers_allow_any_origin(self, app_client):
+        response = app_client.get("/reddit/health", headers={"Origin": "https://example.com"})
+
+        assert response.headers["Access-Control-Allow-Origin"] == "*"
+        assert response.headers["Access-Control-Allow-Methods"] == "GET, OPTIONS"
+
+    def test_cors_preflight(self, app_client):
+        response = app_client.options(
+            "/reddit/health",
+            headers={
+                "Origin": "https://example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+        assert response.status_int == 204
+        assert response.headers["Access-Control-Allow-Origin"] == "*"
+
     def test_ready_ok(self, app_client):
         response = app_client.get("/reddit/ready")
         assert response.json["status"] == "ready"

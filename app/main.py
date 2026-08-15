@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 
-from bottle import Bottle, response
+from bottle import Bottle, abort, request, response
 
 from app.routes import health, reddit
 
@@ -31,6 +31,23 @@ _DEFAULT_ERRORS = {
 def create_app() -> Bottle:
     """Assemble the Bottle application from its route modules."""
     app = Bottle()
+
+    @app.hook("after_request")
+    def _allow_cross_origin_requests():
+        response.set_header("Access-Control-Allow-Origin", "*")
+        response.set_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        response.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    @app.route(
+        "/<:re:.*>",
+        method=["OPTIONS", "GET", "HEAD"],
+    )
+    def _cors_preflight():
+        if request.method != "OPTIONS":
+            abort(404)
+        response.status = 204
+        return ""
+
     app.merge(health.sub)
     app.merge(reddit.sub)
 
