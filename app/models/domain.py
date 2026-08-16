@@ -52,6 +52,7 @@ class RedditItem(BaseModel):
     process_state: ProcessState = ProcessState.new
     job_id: str | None = None
     distill_request: dict[str, Any] | None = None
+    distill_attempts: int = 0
     schema_version: int = 1
 
     @field_validator("created_utc", "fetched_at", mode="after")

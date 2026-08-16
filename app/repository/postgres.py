@@ -59,6 +59,7 @@ def _item_to_row(item: RedditItem) -> dict:
         "process_state": item.process_state.value,
         "job_id": item.job_id,
         "distill_request": item.distill_request,
+        "distill_attempts": item.distill_attempts,
         "schema_version": item.schema_version,
     }
 
@@ -155,6 +156,38 @@ class RedditRepository:
                     distill_request=request,
                 )
             )
+
+    def record_distill_failure(self, fullname: str, *, max_attempts: int) -> ProcessState:
+        """Increment the attempt counter for a submit/job failure.
+
+        Resets the item to ``new`` (clearing the stale job) so it is resubmitted
+        next cycle, unless ``max_attempts`` has been reached, in which case the
+        item is left ``failed``. Returns the resulting state.
+        """
+        with self.engine.begin() as conn:
+            conn.execute(
+                sa.update(reddit_items)
+                .where(reddit_items.c.fullname == fullname)
+                .values(distill_attempts=reddit_items.c.distill_attempts + 1)
+            )
+            attempts = conn.execute(
+                sa.select(reddit_items.c.distill_attempts).where(
+                    reddit_items.c.fullname == fullname
+                )
+            ).scalar_one()
+            final_state = (
+                ProcessState.failed if attempts >= max_attempts else ProcessState.new
+            )
+            conn.execute(
+                sa.update(reddit_items)
+                .where(reddit_items.c.fullname == fullname)
+                .values(
+                    process_state=final_state.value,
+                    job_id=None,
+                    distill_request=None,
+                )
+            )
+        return final_state
 
     def list_items_by_state(
         self, state: ProcessState | str, limit: int = 100

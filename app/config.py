@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # --- Distillation HTTP ------------------------------------------------
     distill_timeout: float = 180.0
     http_retries: int = 3
+    # Max distill attempts (submit + failed-job outcomes) before an item is left
+    # permanently `failed`. Each failure resets the item to `new` for resubmission.
+    distill_max_attempts: int = 10
 
     # --- Read pagination -------------------------------------------------
     default_page_size: int = 25

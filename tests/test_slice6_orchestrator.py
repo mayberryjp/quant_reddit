@@ -129,16 +129,35 @@ class TestFullCycle:
         assert second.items_distilled == 0
 
     @respx.mock
-    def test_submission_failure_marks_item_failed(self, repo):
+    def test_submission_failure_retries_before_giving_up(self, repo):
         respx.post(PROCESS_URL).mock(
             return_value=httpx.Response(503, json={"status": "error", "detail": "down"})
         )
+        source = FakeSource(posts=[_post("failed")])
+        client = DistillClient(base_url=BASE_URL, retries=1)
 
+        # First 2 attempts: back to "new" for resubmission, not yet failed.
+        for _ in range(2):
+            result = run_cycle(
+                repo,
+                reddit_source=source,
+                distill_client=client,
+                subreddits=["wallstreetbets"],
+            )
+            assert result.items_failed == 0
+            item = repo.get_item("t3_failed")
+            assert item.process_state is ProcessState.new
+            assert item.job_id is None
+
+        assert repo.get_item("t3_failed").distill_attempts == 2
+
+        # 3rd attempt reaches the test's max_attempts=3 and is left failed.
         result = run_cycle(
             repo,
-            reddit_source=FakeSource(posts=[_post("failed")]),
-            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            reddit_source=source,
+            distill_client=client,
             subreddits=["wallstreetbets"],
+            distill_max_attempts=3,
         )
 
         assert result.items_failed == 1
@@ -176,7 +195,7 @@ class TestFullCycle:
         assert item.job_id == "job-t3_running"
 
     @respx.mock
-    def test_job_failed_status_marks_item_failed(self, repo):
+    def test_job_failed_status_retries_then_gives_up(self, repo):
         respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
         respx.get(url__regex=rf"{JOBS_URL}/.*").mock(
             return_value=httpx.Response(
@@ -190,12 +209,30 @@ class TestFullCycle:
                 },
             )
         )
+        source = FakeSource(posts=[_post("broken")])
+        client = DistillClient(base_url=BASE_URL, retries=1)
 
+        # Submit + fail once: reset to "new", not yet permanently failed.
         result = run_cycle(
             repo,
-            reddit_source=FakeSource(posts=[_post("broken")]),
-            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            reddit_source=source,
+            distill_client=client,
             subreddits=["wallstreetbets"],
+            distill_max_attempts=2,
+        )
+        assert result.items_submitted == 1
+        assert result.items_failed == 0
+        item = repo.get_item("t3_broken")
+        assert item.process_state is ProcessState.new
+        assert item.distill_attempts == 1
+
+        # Resubmit + fail again: hits max_attempts=2, left permanently failed.
+        result = run_cycle(
+            repo,
+            reddit_source=source,
+            distill_client=client,
+            subreddits=["wallstreetbets"],
+            distill_max_attempts=2,
         )
 
         assert result.items_submitted == 1

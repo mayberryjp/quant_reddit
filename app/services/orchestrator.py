@@ -7,8 +7,10 @@
    queue (item moves to ``submitted``, tagged with the returned ``job_id``).
 3. **Poll** each ``submitted`` item's job; on ``succeeded`` persist the exact
    request and authoritative result and move to ``distilled``, on ``failed``
-   move to ``failed``. Jobs still ``queued``/``running`` are left untouched and
-   are re-checked on the next cycle.
+   increment its attempt counter and reset it to ``new`` for resubmission next
+   cycle (permanently ``failed`` once ``QUANT_REDDIT_DISTILL_MAX_ATTEMPTS`` is
+   reached). Jobs still ``queued``/``running`` are left untouched and are
+   re-checked on the next cycle.
 
 ``run_forever`` runs cycles on ``POLL_INTERVAL`` with an interruptible sleep and
 graceful shutdown on SIGTERM/SIGINT. A per-cycle heartbeat is written to the
@@ -97,6 +99,7 @@ def _submit_new_items(
     *,
     distill_client: DistillClient,
     limit: int,
+    max_attempts: int,
 ) -> tuple[int, int]:
     """Submit ``new`` items to quant_distill. Returns ``(submitted, failed)``."""
     submitted = 0
@@ -108,8 +111,11 @@ def _submit_new_items(
             submitted += 1
         except DistillApiError:
             log.exception("distill submission failed for %s", item.fullname)
-            repo.set_item_state(item.fullname, ProcessState.failed)
-            failed += 1
+            final_state = repo.record_distill_failure(
+                item.fullname, max_attempts=max_attempts
+            )
+            if final_state is ProcessState.failed:
+                failed += 1
     return submitted, failed
 
 
@@ -118,6 +124,7 @@ def _poll_submitted_items(
     *,
     distill_client: DistillClient,
     limit: int,
+    max_attempts: int,
 ) -> tuple[int, int]:
     """Poll ``submitted`` items' jobs. Returns ``(distilled, failed)``."""
     distilled = 0
@@ -125,8 +132,10 @@ def _poll_submitted_items(
     for item in repo.list_items_by_state(ProcessState.submitted, limit=limit):
         if not item.job_id:
             log.error("submitted item %s has no job_id", item.fullname)
-            repo.set_item_state(item.fullname, ProcessState.failed)
-            failed += 1
+            if repo.record_distill_failure(
+                item.fullname, max_attempts=max_attempts
+            ) is ProcessState.failed:
+                failed += 1
             continue
         try:
             job = distill_client.get_job(item.job_id)
@@ -146,8 +155,10 @@ def _poll_submitted_items(
             result = job.get("result")
             if not isinstance(result, dict):
                 log.error("job %s succeeded but carries no result", item.job_id)
-                repo.set_item_state(item.fullname, ProcessState.failed)
-                failed += 1
+                if repo.record_distill_failure(
+                    item.fullname, max_attempts=max_attempts
+                ) is ProcessState.failed:
+                    failed += 1
                 continue
             repo.insert_distillation(
                 DistillationRecord(
@@ -167,8 +178,10 @@ def _poll_submitted_items(
                 item.fullname,
                 job.get("error"),
             )
-            repo.set_item_state(item.fullname, ProcessState.failed)
-            failed += 1
+            if repo.record_distill_failure(
+                item.fullname, max_attempts=max_attempts
+            ) is ProcessState.failed:
+                failed += 1
     return distilled, failed
 
 
@@ -177,14 +190,20 @@ def run_process_cycle(
     *,
     distill_client: DistillClient,
     distill_limit: int = _DEFAULT_DISTILL_LIMIT,
+    distill_max_attempts: int | None = None,
 ) -> ProcessResult:
     """Run one process-only cycle: submit ``new`` items, poll ``submitted`` ones."""
+    max_attempts = (
+        distill_max_attempts
+        if distill_max_attempts is not None
+        else settings.distill_max_attempts
+    )
     result = ProcessResult()
     result.items_submitted, submit_failed = _submit_new_items(
-        repo, distill_client=distill_client, limit=distill_limit
+        repo, distill_client=distill_client, limit=distill_limit, max_attempts=max_attempts
     )
     result.items_distilled, poll_failed = _poll_submitted_items(
-        repo, distill_client=distill_client, limit=distill_limit
+        repo, distill_client=distill_client, limit=distill_limit, max_attempts=max_attempts
     )
     result.items_failed = submit_failed + poll_failed
     return result
@@ -199,6 +218,7 @@ def run_cycle(
     post_batch: int | None = None,
     comments_per_post: int | None = None,
     distill_limit: int = _DEFAULT_DISTILL_LIMIT,
+    distill_max_attempts: int | None = None,
 ) -> CycleResult:
     """Run one full ``ingest → submit/poll`` cycle. Idempotent on re-run."""
     ingest_result = run_ingest_cycle(
@@ -212,6 +232,7 @@ def run_cycle(
         repo,
         distill_client=distill_client,
         distill_limit=distill_limit,
+        distill_max_attempts=distill_max_attempts,
     )
 
     result = CycleResult(ingest=ingest_result)
