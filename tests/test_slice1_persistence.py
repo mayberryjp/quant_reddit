@@ -87,6 +87,7 @@ class TestOperational:
         assert stats["distillations"] == 0
         assert stats["items_by_state"] == {
             "new": 0,
+            "submitted": 0,
             "distilled": 0,
             "skipped": 0,
             "failed": 0,

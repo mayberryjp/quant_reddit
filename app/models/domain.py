@@ -21,6 +21,7 @@ class RedditKind(str, enum.Enum):
 
 class ProcessState(str, enum.Enum):
     new = "new"
+    submitted = "submitted"
     distilled = "distilled"
     skipped = "skipped"
     failed = "failed"
@@ -49,6 +50,8 @@ class RedditItem(BaseModel):
     created_utc: datetime
     fetched_at: datetime
     process_state: ProcessState = ProcessState.new
+    job_id: str | None = None
+    distill_request: dict[str, Any] | None = None
     schema_version: int = 1
 
     @field_validator("created_utc", "fetched_at", mode="after")

@@ -47,10 +47,14 @@ reddit_items = sa.Table(
     sa.Column("created_utc", sa.DateTime(timezone=True), nullable=False),
     sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("process_state", sa.Text, nullable=False, server_default="new"),
+    # quant_distill async job (POST /v1/process returns 202 + job_id; poll GET /v1/jobs/{id}).
+    sa.Column("job_id", sa.Text, nullable=True),
+    sa.Column("distill_request", JSON_VARIANT, nullable=True),
     sa.Column("schema_version", sa.Integer, nullable=False, server_default="1"),
     sa.Index("ix_reddit_items_state", "process_state"),
     sa.Index("ix_reddit_items_subreddit", "subreddit", "created_utc"),
     sa.Index("ix_reddit_items_fetched", "fetched_at"),
+    sa.Index("ix_reddit_items_job_id", "job_id"),
 )
 
 distillations = sa.Table(

@@ -14,6 +14,7 @@ from app.services.reddit_client import RawPost
 
 BASE_URL = "http://distill.test:8021"
 PROCESS_URL = f"{BASE_URL}/v1/process"
+JOBS_URL = f"{BASE_URL}/v1/jobs"
 
 
 class FakeSource:
@@ -42,7 +43,7 @@ def _post(pid, *, body=("x" * 880), score=5, created=1_700_000_000.0) -> RawPost
     )
 
 
-def _api_response(source_item_id: str) -> dict:
+def _job_result(source_item_id: str) -> dict:
     return {
         "status": "ok",
         "request_id": f"req-{source_item_id}",
@@ -59,15 +60,40 @@ def _api_response(source_item_id: str) -> dict:
     }
 
 
-def _mock_success(request: httpx.Request) -> httpx.Response:
+def _mock_submit(request: httpx.Request) -> httpx.Response:
     source_item_id = json.loads(request.content)["source_item_id"]
-    return httpx.Response(200, json=_api_response(source_item_id))
+    job_id = f"job-{source_item_id}"
+    return httpx.Response(
+        202,
+        json={
+            "status": "accepted",
+            "job_id": job_id,
+            "job_status": "queued",
+            "status_url": f"/v1/jobs/{job_id}",
+        },
+    )
+
+
+def _mock_job_succeeded(request: httpx.Request) -> httpx.Response:
+    job_id = request.url.path.rsplit("/", 1)[-1]
+    source_item_id = job_id.removeprefix("job-")
+    return httpx.Response(
+        200,
+        json={
+            "job_id": job_id,
+            "endpoint": "/v1/process",
+            "status": "succeeded",
+            "result": _job_result(source_item_id),
+            "error": None,
+        },
+    )
 
 
 class TestFullCycle:
     @respx.mock
-    def test_cycle_persists_full_response_then_skips_duplicates(self, repo):
-        route = respx.post(PROCESS_URL).mock(side_effect=_mock_success)
+    def test_cycle_submits_then_completes_on_next_poll(self, repo):
+        respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
+        respx.get(url__regex=rf"{JOBS_URL}/.*").mock(side_effect=_mock_job_succeeded)
         source = FakeSource(posts=[_post(f"p{i}") for i in range(4)])
         client = DistillClient(base_url=BASE_URL, retries=1)
 
@@ -78,10 +104,12 @@ class TestFullCycle:
             subreddits=["wallstreetbets"],
         )
 
+        # Same cycle: submit new items, then immediately poll the just-created
+        # jobs (mock resolves them straight to "succeeded").
         assert first.ingest.posts_new == 4
+        assert first.items_submitted == 4
         assert first.items_distilled == 4
         assert first.items_failed == 0
-        assert route.call_count == 4
         stored = repo.get_distillation("t3_p0")
         assert stored.request["text"] == "x" * 800
         assert stored.response["distillation"]["summary"] == "summary for t3_p0"
@@ -97,11 +125,11 @@ class TestFullCycle:
         )
 
         assert second.ingest.posts_duplicate == 4
+        assert second.items_submitted == 0
         assert second.items_distilled == 0
-        assert route.call_count == 4
 
     @respx.mock
-    def test_api_failure_marks_item_failed(self, repo):
+    def test_submission_failure_marks_item_failed(self, repo):
         respx.post(PROCESS_URL).mock(
             return_value=httpx.Response(503, json={"status": "error", "detail": "down"})
         )
@@ -117,11 +145,70 @@ class TestFullCycle:
         assert repo.get_item("t3_failed").process_state is ProcessState.failed
         assert repo.get_distillation("t3_failed") is None
 
+    @respx.mock
+    def test_still_running_job_leaves_item_submitted(self, repo):
+        respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
+        respx.get(url__regex=rf"{JOBS_URL}/.*").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "job_id": "job-t3_running",
+                    "endpoint": "/v1/process",
+                    "status": "running",
+                    "result": None,
+                    "error": None,
+                },
+            )
+        )
+
+        result = run_cycle(
+            repo,
+            reddit_source=FakeSource(posts=[_post("running")]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            subreddits=["wallstreetbets"],
+        )
+
+        assert result.items_submitted == 1
+        assert result.items_distilled == 0
+        assert result.items_failed == 0
+        item = repo.get_item("t3_running")
+        assert item.process_state is ProcessState.submitted
+        assert item.job_id == "job-t3_running"
+
+    @respx.mock
+    def test_job_failed_status_marks_item_failed(self, repo):
+        respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
+        respx.get(url__regex=rf"{JOBS_URL}/.*").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "job_id": "job-t3_broken",
+                    "endpoint": "/v1/process",
+                    "status": "failed",
+                    "result": None,
+                    "error": "DependencyUnavailableError: llm distill call failed",
+                },
+            )
+        )
+
+        result = run_cycle(
+            repo,
+            reddit_source=FakeSource(posts=[_post("broken")]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            subreddits=["wallstreetbets"],
+        )
+
+        assert result.items_submitted == 1
+        assert result.items_failed == 1
+        assert repo.get_item("t3_broken").process_state is ProcessState.failed
+        assert repo.get_distillation("t3_broken") is None
+
 
 class TestRunForever:
     @respx.mock
     def test_run_once_drives_a_cycle(self, repo):
-        respx.post(PROCESS_URL).mock(side_effect=_mock_success)
+        respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
+        respx.get(url__regex=rf"{JOBS_URL}/.*").mock(side_effect=_mock_job_succeeded)
         run_forever(
             repo,
             reddit_source=FakeSource(posts=[_post(f"p{i}") for i in range(3)]),
@@ -132,3 +219,4 @@ class TestRunForever:
 
         assert repo.stats()["items_ingested"] == 3
         assert repo.get_cursor(HEARTBEAT_KEY) is not None
+

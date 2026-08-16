@@ -57,6 +57,8 @@ def _item_to_row(item: RedditItem) -> dict:
         "created_utc": item.created_utc,
         "fetched_at": item.fetched_at,
         "process_state": item.process_state.value,
+        "job_id": item.job_id,
+        "distill_request": item.distill_request,
         "schema_version": item.schema_version,
     }
 
@@ -139,6 +141,19 @@ class RedditRepository:
                 sa.update(reddit_items)
                 .where(reddit_items.c.fullname == fullname)
                 .values(process_state=_val(state))
+            )
+
+    def mark_item_submitted(self, fullname: str, *, job_id: str, request: dict) -> None:
+        """Record the quant_distill job id + exact request for a submitted item."""
+        with self.engine.begin() as conn:
+            conn.execute(
+                sa.update(reddit_items)
+                .where(reddit_items.c.fullname == fullname)
+                .values(
+                    process_state=ProcessState.submitted.value,
+                    job_id=job_id,
+                    distill_request=request,
+                )
             )
 
     def list_items_by_state(
@@ -382,6 +397,7 @@ class RedditRepository:
             "items_ingested": int(items_total or 0),
             "items_by_state": {
                 "new": states.get("new", 0),
+                "submitted": states.get("submitted", 0),
                 "distilled": states.get("distilled", 0),
                 "skipped": states.get("skipped", 0),
                 "failed": states.get("failed", 0),

@@ -72,7 +72,7 @@ def _char_counts(title: str | None, body: str | None, summary: str | None) -> di
 
 
 _ITEM_KINDS = {"post", "comment"}
-_PROCESS_STATES = {"new", "distilled", "skipped", "failed"}
+_PROCESS_STATES = {"new", "submitted", "distilled", "skipped", "failed"}
 _RUN_TYPES = {"ingest", "process", "full"}
 
 

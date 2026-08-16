@@ -8,7 +8,8 @@ flowchart LR
   REDDIT[Reddit] --> INGEST[ingest worker]
   INGEST --> ITEMS[(reddit_items)]
   ITEMS --> PROCESS[process worker]
-  PROCESS -->|POST /v1/process| DISTILL[quant_distill]
+  PROCESS -->|POST /v1/process: 202 + job_id| DISTILL[quant_distill]
+  PROCESS -->|GET /v1/jobs/:job_id| DISTILL
   DISTILL --> PROCESS
   PROCESS --> RESULTS[(distillations)]
   API[Bottle API :8018] --- ITEMS
@@ -22,16 +23,18 @@ flowchart LR
 | Component | Responsibility |
 |---|---|
 | `reddit_client.py` | Reddit discovery, filtering, truncation, and idempotent ingestion |
-| `distill_client.py` | Request mapping, HTTP retries, and response-envelope validation |
-| `orchestrator.py` | Item state transitions and worker run loops |
+| `distill_client.py` | Request mapping, async job submit/poll, and HTTP retries |
+| `orchestrator.py` | Item state transitions (`new` → `submitted` → `distilled`/`failed`) and worker run loops |
 | `repository/` | Source records, exact API requests/responses, cursors, and run history |
 | `routes/` | Health, statistics, and audit reads |
 
 ## Persistence
 
-- `reddit_items`: raw source content keyed by Reddit fullname.
-- `distillations`: one exact `/v1/process` request and authoritative response per
-  source item, including the upstream request ID.
+- `reddit_items`: raw source content keyed by Reddit fullname, plus the in-flight
+  `job_id`/exact request for items in the `submitted` state.
+- `distillations`: one exact `/v1/process` request and authoritative job result per
+  source item, including the upstream request ID. Written once a polled job reaches
+  `succeeded`.
 - `ingest_cursor`: source watermarks and worker heartbeat.
 - `cycle_runs`: ingest/process start, finish, result, and error records.
 
