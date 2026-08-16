@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # For accepted posts, body is truncated to post_max_chars.
     post_min_chars: int = 800
     post_max_chars: int = 800
+    # Playwright page-load timeout (seconds) for browser-backed scraping.
+    http_timeout: float = 30.0
 
     # --- Distillation HTTP ------------------------------------------------
     distill_timeout: float = 180.0
