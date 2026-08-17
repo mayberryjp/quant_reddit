@@ -209,29 +209,36 @@ class PlaywrightRedditSource:
                 "a[href*='/comments/']",
                 r"""
                 (els) => {
-                  const out = [];
-                  const seen = new Set();
-                  for (const a of els) {
-                    const href = a.getAttribute('href') || '';
-                    if (!href.includes('/comments/')) continue;
-                    if (seen.has(href)) continue;
-                    // Card-wrapping anchors carry the whole post (title + body +
-                    // flair); only the post-title anchor holds the title alone.
-                    const isTitleAnchor =
-                      (a.id || '').startsWith('post-title-') ||
-                      a.getAttribute('slot') === 'title' ||
-                      a.getAttribute('data-click-id') === 'body';
-                    if (!isTitleAnchor) continue;
-                    seen.add(href);
-                    const text = (a.getAttribute('aria-label') || a.textContent || '').trim();
-                    const m = href.match(/\/comments\/([a-z0-9]+)\//i);
-                    out.push({
-                      id: m ? m[1] : null,
-                      title: text,
-                      permalink: href,
-                    });
-                  }
-                  return out;
+                  // Prefer the post-title anchor: card-wrapping anchors carry the
+                  // whole post (title + body + flair). Fall back to any
+                  // /comments/ anchor so a Reddit DOM change degrades to the old
+                  // behaviour rather than ingesting nothing.
+                  const collect = (titleAnchorsOnly) => {
+                    const out = [];
+                    const seen = new Set();
+                    for (const a of els) {
+                      const href = a.getAttribute('href') || '';
+                      if (!href.includes('/comments/')) continue;
+                      if (seen.has(href)) continue;
+                      const isTitleAnchor =
+                        (a.id || '').startsWith('post-title-') ||
+                        a.getAttribute('slot') === 'title' ||
+                        a.getAttribute('data-click-id') === 'body';
+                      if (titleAnchorsOnly && !isTitleAnchor) continue;
+                      seen.add(href);
+                      const text =
+                        (a.getAttribute('aria-label') || a.textContent || '').trim();
+                      const m = href.match(/\/comments\/([a-z0-9]+)\//i);
+                      out.push({
+                        id: m ? m[1] : null,
+                        title: text,
+                        permalink: href,
+                      });
+                    }
+                    return out;
+                  };
+                  const preferred = collect(true);
+                  return preferred.length ? preferred : collect(false);
                 }
                 """,
             )
@@ -250,6 +257,11 @@ class PlaywrightRedditSource:
 
             context.close()
 
+        if not posts_payload:
+            log.warning(
+                "listing scrape for r/%s returned no posts (selector or block page?)",
+                subreddit,
+            )
         return posts_payload
 
     def new_posts(self, subreddit: str, limit: int) -> Iterable[RawPost]:
