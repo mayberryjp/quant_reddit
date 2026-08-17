@@ -215,8 +215,15 @@ class PlaywrightRedditSource:
                     const href = a.getAttribute('href') || '';
                     if (!href.includes('/comments/')) continue;
                     if (seen.has(href)) continue;
+                    // Card-wrapping anchors carry the whole post (title + body +
+                    // flair); only the post-title anchor holds the title alone.
+                    const isTitleAnchor =
+                      (a.id || '').startsWith('post-title-') ||
+                      a.getAttribute('slot') === 'title' ||
+                      a.getAttribute('data-click-id') === 'body';
+                    if (!isTitleAnchor) continue;
                     seen.add(href);
-                    const text = (a.textContent || '').trim();
+                    const text = (a.getAttribute('aria-label') || a.textContent || '').trim();
                     const m = href.match(/\/comments\/([a-z0-9]+)\//i);
                     out.push({
                       id: m ? m[1] : null,
@@ -334,9 +341,13 @@ class PlaywrightRedditSource:
 
         # Fallback: extract from HTML if JSON parsing didn't work
         if not title or title == fallback_title:
-            title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', page_html)
+            title_match = re.search(r"<h1[^>]*>([\s\S]*?)</h1>", page_html)
             if title_match:
-                title = html_module.unescape(title_match.group(1)).strip()
+                stripped = re.sub(r"<[^>]+>", " ", title_match.group(1))
+                stripped = html_module.unescape(stripped)
+                stripped = re.sub(r"\s+", " ", stripped).strip()
+                if stripped:
+                    title = stripped
         
         if not body:
             # Look for post body content in various HTML structures

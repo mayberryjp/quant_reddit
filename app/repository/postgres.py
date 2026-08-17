@@ -306,7 +306,7 @@ class RedditRepository:
         process_state: str | None = None,
         subreddit: str | None = None,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int | None = None,
     ) -> tuple[list[RedditItem], int]:
         conditions: list = []
         if kind:
@@ -316,22 +316,18 @@ class RedditRepository:
         if subreddit:
             conditions.append(reddit_items.c.subreddit == subreddit)
         where = sa.and_(*conditions) if conditions else sa.true()
-        offset = max(page - 1, 0) * page_size
         with self.engine.connect() as conn:
             total = conn.execute(
                 sa.select(sa.func.count()).select_from(reddit_items).where(where)
             ).scalar_one()
-            rows = (
-                conn.execute(
-                    sa.select(reddit_items)
-                    .where(where)
-                    .order_by(reddit_items.c.fetched_at.desc(), reddit_items.c.id.desc())
-                    .limit(page_size)
-                    .offset(offset)
-                )
-                .mappings()
-                .all()
+            stmt = (
+                sa.select(reddit_items)
+                .where(where)
+                .order_by(reddit_items.c.fetched_at.desc(), reddit_items.c.id.desc())
             )
+            if page_size is not None:
+                stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)
+            rows = conn.execute(stmt).mappings().all()
         return [_row_to_item(r) for r in rows], int(total)
 
     def latest_distillation_summaries(
@@ -358,7 +354,7 @@ class RedditRepository:
         request_id: str | None = None,
         reddit_fullname: str | None = None,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int | None = None,
     ) -> tuple[list[DistillationRecord], int]:
         conditions: list = []
         if request_id:
@@ -366,24 +362,18 @@ class RedditRepository:
         if reddit_fullname:
             conditions.append(distillations.c.reddit_fullname == reddit_fullname)
         where = sa.and_(*conditions) if conditions else sa.true()
-        offset = max(page - 1, 0) * page_size
         with self.engine.connect() as conn:
             total = conn.execute(
                 sa.select(sa.func.count()).select_from(distillations).where(where)
             ).scalar_one()
-            rows = (
-                conn.execute(
-                    sa.select(distillations)
-                    .where(where)
-                    .order_by(
-                        distillations.c.created_at.desc(), distillations.c.id.desc()
-                    )
-                    .limit(page_size)
-                    .offset(offset)
-                )
-                .mappings()
-                .all()
+            stmt = (
+                sa.select(distillations)
+                .where(where)
+                .order_by(distillations.c.created_at.desc(), distillations.c.id.desc())
             )
+            if page_size is not None:
+                stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)
+            rows = conn.execute(stmt).mappings().all()
         return [_row_to_distillation(r) for r in rows], int(total)
 
     def set_heartbeat(self) -> None:
@@ -462,26 +452,22 @@ class RedditRepository:
         *,
         run_type: str | None = None,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int | None = None,
     ) -> tuple[list[CycleRun], int]:
         conditions: list = []
         if run_type:
             conditions.append(cycle_runs.c.run_type == run_type)
         where = sa.and_(*conditions) if conditions else sa.true()
-        offset = max(page - 1, 0) * page_size
         with self.engine.connect() as conn:
             total = conn.execute(
                 sa.select(sa.func.count()).select_from(cycle_runs).where(where)
             ).scalar_one()
-            rows = (
-                conn.execute(
-                    sa.select(cycle_runs)
-                    .where(where)
-                    .order_by(cycle_runs.c.started_at.desc(), cycle_runs.c.id.desc())
-                    .limit(page_size)
-                    .offset(offset)
-                )
-                .mappings()
-                .all()
+            stmt = (
+                sa.select(cycle_runs)
+                .where(where)
+                .order_by(cycle_runs.c.started_at.desc(), cycle_runs.c.id.desc())
             )
+            if page_size is not None:
+                stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)
+            rows = conn.execute(stmt).mappings().all()
         return [_row_to_run(r) for r in rows], int(total)

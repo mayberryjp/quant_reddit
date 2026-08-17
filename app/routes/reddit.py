@@ -24,11 +24,15 @@ def _error(status: int, detail: str) -> HTTPResponse:
     )
 
 
-def _page_params() -> tuple[int, int]:
+def _page_params() -> tuple[int, int | None]:
+    """Return ``(page, page_size)``; ``page_size`` is None when unpaginated."""
     params = request.params
+    raw_page_size = params.get("page_size")
     try:
         page = max(int(params.get("page", 1)), 1)
-        page_size = int(params.get("page_size", settings.default_page_size))
+        if raw_page_size in (None, ""):
+            return page, None
+        page_size = int(raw_page_size)
     except (ValueError, TypeError):
         raise _error(422, "page and page_size must be integers")
     page_size = max(1, min(page_size, settings.max_page_size))

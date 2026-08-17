@@ -5,7 +5,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to an external PostgreSQL database}
       API_LISTEN_ADDRESS: 0.0.0.0
       API_PORT: "8018"
-      QUANT_DISTILL_URL: ${QUANT_DISTILL_URL:-http://host.docker.internal:8021}
+      QUANT_DISTILL_URL: ${QUANT_DISTILL_URL:-http://distill.quant.mayberry.farm:8021}
       REDDIT_HTTP_BASE_URL: ${REDDIT_HTTP_BASE_URL:-https://www.reddit.com}
       QUANT_REDDIT_INGEST_INTERVAL: ${QUANT_REDDIT_INGEST_INTERVAL:-3600}
       QUANT_REDDIT_PROCESS_INTERVAL: ${QUANT_REDDIT_PROCESS_INTERVAL:-60}
