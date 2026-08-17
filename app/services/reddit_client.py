@@ -37,6 +37,24 @@ log = logging.getLogger("quant_reddit.reddit_client")
 _CASHTAG_RE = re.compile(r"\$[A-Za-z]{1,5}\b")
 
 
+def _to_int(value) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _iso_to_epoch(value) -> float:
+    """Parse Reddit's ISO-8601 ``created-timestamp`` attribute to epoch seconds."""
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 # ----------------------------------------------------------------------------
 # Normalized source objects (decoupled from PRAW)
 # ----------------------------------------------------------------------------
@@ -146,6 +164,13 @@ class PlaywrightRedditSource:
     working local test script, avoiding the blocked reddit.com JSON endpoints.
     """
 
+    # Reddit serves a block page to a Chromium that self-identifies as a bot, so
+    # this path cannot reuse the API-style ``REDDIT_USER_AGENT``.
+    BROWSER_USER_AGENT = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    )
+
     def __init__(
         self,
         *,
@@ -168,7 +193,8 @@ class PlaywrightRedditSource:
     @classmethod
     def from_settings(cls) -> "PlaywrightRedditSource":
         return cls(
-            user_agent=settings.reddit_user_agent,
+            user_agent=getattr(settings, "reddit_browser_user_agent", "")
+            or cls.BROWSER_USER_AGENT,
             profile_dir=getattr(settings, "reddit_profile_dir", ".playwright-profile/reddit"),
             load_timeout_ms=int(settings.http_timeout * 1000),
             settle_ms=3000,
@@ -187,6 +213,7 @@ class PlaywrightRedditSource:
 
         listing_url = f"https://www.reddit.com/r/{subreddit}/new/"
         posts_payload: list[dict] = []
+        page_html = ""
 
         with sync_playwright() as p:
             context = p.chromium.launch_persistent_context(
@@ -206,40 +233,27 @@ class PlaywrightRedditSource:
                 page.wait_for_timeout(1200)
 
             rows = page.eval_on_selector_all(
-                "a[href*='/comments/']",
+                "shreddit-post",
                 r"""
-                (els) => {
-                  // Prefer the post-title anchor: card-wrapping anchors carry the
-                  // whole post (title + body + flair). Fall back to any
-                  // /comments/ anchor so a Reddit DOM change degrades to the old
-                  // behaviour rather than ingesting nothing.
-                  const collect = (titleAnchorsOnly) => {
-                    const out = [];
-                    const seen = new Set();
-                    for (const a of els) {
-                      const href = a.getAttribute('href') || '';
-                      if (!href.includes('/comments/')) continue;
-                      if (seen.has(href)) continue;
-                      const isTitleAnchor =
-                        (a.id || '').startsWith('post-title-') ||
-                        a.getAttribute('slot') === 'title' ||
-                        a.getAttribute('data-click-id') === 'body';
-                      if (titleAnchorsOnly && !isTitleAnchor) continue;
-                      seen.add(href);
-                      const text =
-                        (a.getAttribute('aria-label') || a.textContent || '').trim();
-                      const m = href.match(/\/comments\/([a-z0-9]+)\//i);
-                      out.push({
-                        id: m ? m[1] : null,
-                        title: text,
-                        permalink: href,
-                      });
-                    }
-                    return out;
+                (els) => els.map((el) => {
+                  const attr = (n) => el.getAttribute(n) || '';
+                  // The rendered body is CSS-clamped, not truncated, so the full
+                  // selftext is present in the DOM for text posts.
+                  const bodyEl = el.querySelector(
+                    '[id$="-post-rtjson-content"], shreddit-post-text-body'
+                  );
+                  const body = bodyEl ? (bodyEl.innerText || bodyEl.textContent || '') : '';
+                  return {
+                    id: attr('id').replace(/^t3_/, ''),
+                    title: attr('post-title'),
+                    body: body.trim(),
+                    permalink: attr('permalink'),
+                    author: attr('author'),
+                    score: attr('score'),
+                    comment_count: attr('comment-count'),
+                    created_timestamp: attr('created-timestamp'),
                   };
-                  const preferred = collect(true);
-                  return preferred.length ? preferred : collect(false);
-                }
+                }).filter((r) => r.id)
                 """,
             )
 
@@ -251,10 +265,17 @@ class PlaywrightRedditSource:
                     {
                         "id": str(row.get("id") or "").strip(),
                         "title": str(row.get("title") or ""),
+                        "body": str(row.get("body") or ""),
                         "permalink": permalink,
+                        "author": str(row.get("author") or ""),
+                        "score": str(row.get("score") or ""),
+                        "comment_count": str(row.get("comment_count") or ""),
+                        "created_timestamp": str(row.get("created_timestamp") or ""),
                     }
                 )
 
+            if not posts_payload:
+                page_html = page.content()
             context.close()
 
         if not posts_payload:
@@ -262,16 +283,57 @@ class PlaywrightRedditSource:
                 "listing scrape for r/%s returned no posts (selector or block page?)",
                 subreddit,
             )
+            self._dump_debug_html(subreddit, page_html)
         return posts_payload
+
+    @staticmethod
+    def _dump_debug_html(subreddit: str, page_html: str) -> None:
+        """Persist the served HTML so an empty scrape can be diagnosed."""
+        try:
+            out_dir = Path("local_dumps/empty_listings")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            path = out_dir / f"{subreddit}_{stamp}.html"
+            path.write_text(page_html, encoding="utf-8")
+            log.warning("wrote served HTML for r/%s to %s", subreddit, path)
+        except Exception:  # noqa: BLE001 - diagnostics must never break ingest
+            log.debug("failed to dump empty-listing HTML", exc_info=True)
 
     def new_posts(self, subreddit: str, limit: int) -> Iterable[RawPost]:
         for post in self._fetch_page_dump(subreddit, limit):
             permalink = str(post.get("permalink") or "")
             post_id = str(post.get("id") or "").strip()
-            page_html = self._fetch_post_html(permalink)
-            title, body, author, score, created_utc, num_comments = self._parse_post_html(
-                page_html, fallback_title=str(post.get("title") or ""), fallback_id=post_id
-            )
+
+            title = str(post.get("title") or "")
+            body = str(post.get("body") or "")
+            author = str(post.get("author") or "") or None
+            score = _to_int(post.get("score"))
+            num_comments = _to_int(post.get("comment_count"))
+            created_utc = _iso_to_epoch(post.get("created_timestamp"))
+
+            # Listing cards omit the body for link/image posts and can clamp long
+            # selftext, so only pay for a page load when something is missing.
+            if not body or not title or created_utc == 0.0:
+                page_html = self._fetch_post_html(permalink)
+                (
+                    parsed_title,
+                    parsed_body,
+                    parsed_author,
+                    parsed_score,
+                    parsed_created,
+                    parsed_comments,
+                ) = self._parse_post_html(
+                    page_html,
+                    fallback_title=title,
+                    fallback_id=post_id,
+                )
+                title = title or parsed_title
+                body = body or parsed_body
+                author = author or parsed_author
+                score = score or parsed_score
+                num_comments = num_comments or parsed_comments
+                created_utc = created_utc or parsed_created
+
             yield RawPost(
                 fullname=f"t3_{post_id}" if post_id else "",
                 id=post_id,

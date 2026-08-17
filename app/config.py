@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     reddit_http_base_url: str = Field(
         default="https://www.reddit.com", validation_alias="REDDIT_HTTP_BASE_URL"
     )
+    # Browser-rendered scraping must not present the API bot UA or Reddit blocks it.
+    reddit_browser_user_agent: str = Field(
+        default="", validation_alias="REDDIT_BROWSER_USER_AGENT"
+    )
 
     # --- Shared processing service (read unprefixed) ---------------------
     quant_distill_url: str = Field(
