@@ -29,13 +29,17 @@ from __future__ import annotations
 import argparse
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import get_engine
 from app.repository.schema import distillations, reddit_items
 
 
 def _empty_summary_where_clause():
-    summary = distillations.c.response["distillation"]["summary"].astext
+    # Chained JSON indexing loses the JSONB comparator (and thus .astext)
+    # unless the column is explicitly cast to JSONB first.
+    response = sa.cast(distillations.c.response, JSONB)
+    summary = response["distillation"]["summary"].astext
     return sa.or_(summary.is_(None), summary == "")
 
 
