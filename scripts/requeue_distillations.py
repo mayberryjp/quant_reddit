@@ -41,6 +41,10 @@ from app.db import get_engine
 from app.repository.postgres import HEARTBEAT_SOURCE_KEY
 from app.repository.schema import distillations, ingest_cursor, reddit_items
 
+# Pre-existing tables this service no longer writes, but which still hold a
+# foreign key to reddit_items and therefore block deleting from it.
+_LEGACY_DEPENDENT_TABLES = ("reddit.llm_extractions", "reddit.emission_log")
+
 
 def _empty_summary_where_clause():
     # Chained JSON indexing loses the JSONB comparator (and thus .astext)
@@ -100,6 +104,16 @@ def parse_args() -> argparse.Namespace:
         "--purge-cursors",
         action="store_true",
         help="With --purge-items, also clear ingest_cursor watermarks.",
+    )
+    parser.add_argument(
+        "--purge-legacy",
+        action="store_true",
+        help=(
+            "With --purge-items, also delete rows from the legacy "
+            "llm_extractions/emission_log tables that hold a foreign key to "
+            "reddit_items. Destroys historical audit data no longer used by "
+            "this service, but is required for --purge-items to succeed."
+        ),
     )
     parser.add_argument(
         "--sample-limit",
@@ -204,13 +218,27 @@ def reset_everything(conn: sa.Connection) -> tuple[int, int]:
     return int(deleted), int(reset)
 
 
-def purge_items(conn: sa.Connection, *, purge_cursors: bool) -> tuple[int, int, int]:
+def purge_items(
+    conn: sa.Connection, *, purge_cursors: bool, purge_legacy: bool
+) -> tuple[int, int, int, int]:
     """Delete all distillations then all items so they are re-ingested.
 
-    Returns ``(distillations_deleted, items_deleted, cursors_deleted)``. The
+    Returns ``(distillations, items, cursors, legacy_rows)`` deleted. The
     heartbeat cursor is preserved so readiness/stats keep reporting liveness.
     """
     deleted_distillations = conn.execute(sa.delete(distillations)).rowcount or 0
+
+    deleted_legacy = 0
+    if purge_legacy:
+        for table in _LEGACY_DEPENDENT_TABLES:
+            if conn.execute(
+                sa.text("SELECT to_regclass(:name)"), {"name": table}
+            ).scalar() is None:
+                continue
+            deleted_legacy += (
+                conn.execute(sa.text(f"DELETE FROM {table}")).rowcount or 0
+            )
+
     deleted_items = conn.execute(sa.delete(reddit_items)).rowcount or 0
     deleted_cursors = 0
     if purge_cursors:
@@ -219,7 +247,12 @@ def purge_items(conn: sa.Connection, *, purge_cursors: bool) -> tuple[int, int, 
                 ingest_cursor.c.source_key != HEARTBEAT_SOURCE_KEY
             )
         ).rowcount or 0
-    return int(deleted_distillations), int(deleted_items), int(deleted_cursors)
+    return (
+        int(deleted_distillations),
+        int(deleted_items),
+        int(deleted_cursors),
+        int(deleted_legacy),
+    )
 
 
 def main() -> int:
@@ -240,16 +273,25 @@ def main() -> int:
         )
         if args.purge_cursors:
             print("  ...and clear ingest_cursor watermarks (heartbeat preserved).")
+        if args.purge_legacy:
+            print(f"  ...and delete all rows from {', '.join(_LEGACY_DEPENDENT_TABLES)}.")
+        else:
+            print(
+                "  NOTE: legacy llm_extractions/emission_log rows reference "
+                "reddit_items and will block this. Add --purge-legacy to clear them."
+            )
         if not args.apply:
             print("Dry run only. Re-run with --apply to perform updates.")
             return 0
         with engine.begin() as conn:
-            deleted_d, deleted_i, deleted_c = purge_items(
-                conn, purge_cursors=args.purge_cursors
+            deleted_d, deleted_i, deleted_c, deleted_l = purge_items(
+                conn,
+                purge_cursors=args.purge_cursors,
+                purge_legacy=args.purge_legacy,
             )
         print(
             f"Deleted {deleted_d} distillations, {deleted_i} items, "
-            f"{deleted_c} cursors."
+            f"{deleted_c} cursors, {deleted_l} legacy rows."
         )
         return 0
 
