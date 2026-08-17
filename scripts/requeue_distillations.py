@@ -12,14 +12,20 @@ Two independent repairs, both run unless narrowed with flags:
 
 Usage:
     # Dry run (default): prints counts and sample rows only
-    python scripts/requeue_distillations.py
+    python -m scripts.requeue_distillations
 
     # Apply changes
-    python scripts/requeue_distillations.py --apply
+    python -m scripts.requeue_distillations --apply
 
     # Only run one of the two repairs
-    python scripts/requeue_distillations.py --apply --only empty-summaries
-    python scripts/requeue_distillations.py --apply --only stuck-items
+    python -m scripts.requeue_distillations --apply --only empty-summaries
+    python -m scripts.requeue_distillations --apply --only stuck-items
+
+    # Wipe all distillations and requeue every item (source text is kept)
+    python -m scripts.requeue_distillations --reset-all --apply
+
+    # Delete items too, so posts are re-scraped from Reddit on next ingest
+    python -m scripts.requeue_distillations --purge-items --purge-cursors --apply
 
 Requires DATABASE_URL in the environment.
 """
@@ -32,7 +38,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import get_engine
-from app.repository.schema import distillations, reddit_items
+from app.repository.postgres import HEARTBEAT_SOURCE_KEY
+from app.repository.schema import distillations, ingest_cursor, reddit_items
 
 
 def _empty_summary_where_clause():
@@ -71,6 +78,28 @@ def parse_args() -> argparse.Namespace:
         choices=["empty-summaries", "stuck-items"],
         default=None,
         help="Run only one repair instead of both.",
+    )
+    parser.add_argument(
+        "--reset-all",
+        action="store_true",
+        help=(
+            "Nuclear option: delete every distillation and reset every item to "
+            "'new' so the whole corpus is redistilled. Ignores --only."
+        ),
+    )
+    parser.add_argument(
+        "--purge-items",
+        action="store_true",
+        help=(
+            "Delete every distillation AND every reddit_items row, so posts are "
+            "re-scraped from Reddit on the next ingest cycle. Use when the stored "
+            "title/body themselves are wrong. Ignores --only and --reset-all."
+        ),
+    )
+    parser.add_argument(
+        "--purge-cursors",
+        action="store_true",
+        help="With --purge-items, also clear ingest_cursor watermarks.",
     )
     parser.add_argument(
         "--sample-limit",
@@ -161,9 +190,88 @@ def requeue_stuck_items(conn: sa.Connection) -> int:
     return int(result.rowcount or 0)
 
 
+def reset_everything(conn: sa.Connection) -> tuple[int, int]:
+    """Delete all distillations and reset all items. Returns ``(deleted, reset)``."""
+    deleted = conn.execute(sa.delete(distillations)).rowcount or 0
+    reset = conn.execute(
+        sa.update(reddit_items).values(
+            process_state="new",
+            job_id=None,
+            distill_request=None,
+            distill_attempts=0,
+        )
+    ).rowcount or 0
+    return int(deleted), int(reset)
+
+
+def purge_items(conn: sa.Connection, *, purge_cursors: bool) -> tuple[int, int, int]:
+    """Delete all distillations then all items so they are re-ingested.
+
+    Returns ``(distillations_deleted, items_deleted, cursors_deleted)``. The
+    heartbeat cursor is preserved so readiness/stats keep reporting liveness.
+    """
+    deleted_distillations = conn.execute(sa.delete(distillations)).rowcount or 0
+    deleted_items = conn.execute(sa.delete(reddit_items)).rowcount or 0
+    deleted_cursors = 0
+    if purge_cursors:
+        deleted_cursors = conn.execute(
+            sa.delete(ingest_cursor).where(
+                ingest_cursor.c.source_key != HEARTBEAT_SOURCE_KEY
+            )
+        ).rowcount or 0
+    return int(deleted_distillations), int(deleted_items), int(deleted_cursors)
+
+
 def main() -> int:
     args = parse_args()
     engine = get_engine()
+
+    if args.purge_items:
+        with engine.connect() as conn:
+            distill_total = conn.execute(
+                sa.select(sa.func.count()).select_from(distillations)
+            ).scalar_one()
+            item_total = conn.execute(
+                sa.select(sa.func.count()).select_from(reddit_items)
+            ).scalar_one()
+        print(
+            f"PURGE ITEMS: would delete {distill_total} distillations and "
+            f"{item_total} reddit_items (posts will be re-scraped on next ingest)."
+        )
+        if args.purge_cursors:
+            print("  ...and clear ingest_cursor watermarks (heartbeat preserved).")
+        if not args.apply:
+            print("Dry run only. Re-run with --apply to perform updates.")
+            return 0
+        with engine.begin() as conn:
+            deleted_d, deleted_i, deleted_c = purge_items(
+                conn, purge_cursors=args.purge_cursors
+            )
+        print(
+            f"Deleted {deleted_d} distillations, {deleted_i} items, "
+            f"{deleted_c} cursors."
+        )
+        return 0
+
+    if args.reset_all:
+        with engine.connect() as conn:
+            distill_total = conn.execute(
+                sa.select(sa.func.count()).select_from(distillations)
+            ).scalar_one()
+            item_total = conn.execute(
+                sa.select(sa.func.count()).select_from(reddit_items)
+            ).scalar_one()
+        print(
+            f"RESET ALL: would delete {distill_total} distillations and reset "
+            f"{item_total} items to 'new'."
+        )
+        if not args.apply:
+            print("Dry run only. Re-run with --apply to perform updates.")
+            return 0
+        with engine.begin() as conn:
+            deleted, reset = reset_everything(conn)
+        print(f"Deleted {deleted} distillations; reset {reset} items to 'new'.")
+        return 0
 
     run_empty_summaries = args.only in (None, "empty-summaries")
     run_stuck_items = args.only in (None, "stuck-items")
