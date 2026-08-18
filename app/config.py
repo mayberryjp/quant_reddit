@@ -66,9 +66,8 @@ class Settings(BaseSettings):
     # when it looks high-signal, to stay under Reddit's ~100 req/min budget.
     comment_min_score: int = 50
     comment_min_comments: int = 20
-    # Post text gating: skip posts whose title+body is shorter than this.
-    # For accepted posts, body is truncated to post_max_chars.
-    post_min_chars: int = 800
+    # Only process posts whose title+body meets this minimum. Accepted posts
+    # retain their complete text; this is not a truncation limit.
     post_max_chars: int = 800
     # Playwright page-load timeout (seconds) for browser-backed scraping.
     http_timeout: float = 30.0
@@ -76,7 +75,6 @@ class Settings(BaseSettings):
     # --- Distillation HTTP ------------------------------------------------
     distill_timeout: float = 180.0
     http_retries: int = 3
-    distill_submit_workers: int = 16
     # Max distill attempts (submit + failed-job outcomes) before an item is left
     # permanently `failed`. Each failure resets the item to `new` for resubmission.
     distill_max_attempts: int = 10
@@ -116,12 +114,8 @@ def validate_config(s: Settings, database_url: str | None) -> list[str]:
             "REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set "
             "(required when REDDIT_SOURCE_MODE=praw)"
         )
-    if s.post_min_chars < 0:
-        problems.append("QUANT_REDDIT_POST_MIN_CHARS must be >= 0")
     if s.post_max_chars <= 0:
         problems.append("QUANT_REDDIT_POST_MAX_CHARS must be > 0")
-    if s.post_max_chars < s.post_min_chars:
-        problems.append("QUANT_REDDIT_POST_MAX_CHARS must be >= QUANT_REDDIT_POST_MIN_CHARS")
     for name, url in (
         ("QUANT_DISTILL_URL", s.quant_distill_url),
         ("REDDIT_HTTP_BASE_URL", s.reddit_http_base_url),

@@ -157,38 +157,12 @@ class RedditRepository:
                 )
             )
 
-    def claim_new_items_for_submission(self) -> list[RedditItem]:
-        """Atomically move pending items to ``submitting`` and return those claimed."""
-        claimed: list[RedditItem] = []
-        with self.engine.begin() as conn:
-            rows = (
-                conn.execute(
-                    sa.select(reddit_items)
-                    .where(reddit_items.c.process_state == ProcessState.new.value)
-                    .order_by(reddit_items.c.created_utc.asc(), reddit_items.c.id.asc())
-                )
-                .mappings()
-                .all()
-            )
-            for row in rows:
-                result = conn.execute(
-                    sa.update(reddit_items)
-                    .where(
-                        reddit_items.c.fullname == row["fullname"],
-                        reddit_items.c.process_state == ProcessState.new.value,
-                    )
-                    .values(process_state=ProcessState.submitting.value)
-                )
-                if result.rowcount:
-                    claimed.append(_row_to_item(row))
-        return claimed
-
     def requeue_submitting_items(self) -> int:
-        """Return interrupted submissions to ``new`` before a fresh ingest run."""
+        """Recover legacy ``submitting`` rows created by older service versions."""
         with self.engine.begin() as conn:
             result = conn.execute(
                 sa.update(reddit_items)
-                .where(reddit_items.c.process_state == ProcessState.submitting.value)
+                .where(reddit_items.c.process_state == "submitting")
                 .values(process_state=ProcessState.new.value)
             )
         return result.rowcount

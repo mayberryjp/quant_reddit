@@ -185,13 +185,13 @@ class TestIngest:
         # 2023-11-14T22:13:20Z; ensures milliseconds were converted to seconds.
         assert int(post.created_utc.timestamp()) == 1_700_000_000
 
-    def test_skips_posts_under_min_length(self, repo):
+    def test_skips_posts_under_post_length_limit(self, repo):
         source = FakeRedditSource(posts=[make_post("short", body="too short")])
         result = ingest_once(repo, source, subreddit=SUB)
         assert result.posts_new == 0
         assert repo.get_item("t3_short") is None
 
-    def test_accepts_post_when_title_and_body_meet_min_length(self, repo):
+    def test_accepts_post_when_title_and_body_meet_length_limit(self, repo):
         source = FakeRedditSource(
             posts=[make_post("tb_len", title="t" * 790, body="b" * 20)]
         )
@@ -199,9 +199,9 @@ class TestIngest:
         assert result.posts_new == 1
         assert repo.get_item("t3_tb_len") is not None
 
-    def test_truncates_posts_to_max_length(self, repo):
+    def test_preserves_complete_accepted_post_body(self, repo):
         source = FakeRedditSource(posts=[make_post("long", body="a" * 1200)])
         ingest_once(repo, source, subreddit=SUB)
         post = repo.get_item("t3_long")
         assert post is not None
-        assert len(post.body) == 800
+        assert len(post.body) == 1200

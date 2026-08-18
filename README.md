@@ -48,12 +48,12 @@ request and successful response are persisted.
 - `DATABASE_URL`: PostgreSQL DSN.
 - `QUANT_DISTILL_URL`: `quant_distill` base URL; the client appends `/v1/process`.
 - `QUANT_REDDIT_DISTILL_TIMEOUT`: request timeout in seconds, default `180`.
-- `QUANT_REDDIT_DISTILL_SUBMIT_WORKERS`: concurrent job submissions, default `16`.
 - `QUANT_REDDIT_HTTP_RETRIES`: total bounded attempts, default `3`.
 - `REDDIT_SOURCE_MODE`: `auto`, `praw`, or `scrape`.
 - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`: PRAW settings.
 - `QUANT_REDDIT_INGEST_INTERVAL`, `QUANT_REDDIT_PROCESS_INTERVAL`: worker intervals.
-- `QUANT_REDDIT_POST_MIN_CHARS`, `QUANT_REDDIT_POST_MAX_CHARS`: source text limits.
+- `QUANT_REDDIT_POST_MAX_CHARS`: minimum combined title-and-body length required
+	to process a post; accepted posts retain their complete text. Default `800`.
 
 See [architecture](docs/architecture.md), [request mapping](docs/producer_mapping.md),
 and the [runbook](docs/runbook.md).

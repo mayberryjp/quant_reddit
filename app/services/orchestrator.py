@@ -22,7 +22,6 @@ with all externals stubbed.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import signal
 import threading
@@ -101,34 +100,19 @@ def _submit_new_items(
     distill_client: DistillClient,
     max_attempts: int,
 ) -> tuple[int, int]:
-    """Concurrently submit claimed items. Returns ``(submitted, failed)``."""
+    """Synchronously submit every pending item. Returns ``(submitted, failed)``."""
     submitted = 0
     failed = 0
-    items = repo.claim_new_items_for_submission()
-    if not items:
-        return submitted, failed
-
-    def submit_item(item):
+    for item in repo.list_items_by_state(ProcessState.new, limit=None):
         try:
             job_id, request = distill_client.submit(item)
-            return item, job_id, request, None
-        except Exception as exc:  # noqa: BLE001 - one submission must not block the batch
-            return item, None, None, exc
-
-    worker_count = min(len(items), max(1, settings.distill_submit_workers))
-    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="distill-submit") as executor:
-        futures = [executor.submit(submit_item, item) for item in items]
-        for future in as_completed(futures):
-            item, job_id, request, error = future.result()
-            if error is None:
-                repo.mark_item_submitted(item.fullname, job_id=job_id, request=request)
-                submitted += 1
-                continue
-            log.error("distill submission failed for %s", item.fullname, exc_info=error)
-            if (
-                repo.record_distill_failure(item.fullname, max_attempts=max_attempts)
-                is ProcessState.failed
-            ):
+            repo.mark_item_submitted(item.fullname, job_id=job_id, request=request)
+            submitted += 1
+        except DistillApiError:
+            log.exception("distill submission failed for %s", item.fullname)
+            if repo.record_distill_failure(
+                item.fullname, max_attempts=max_attempts
+            ) is ProcessState.failed:
                 failed += 1
     return submitted, failed
 
@@ -225,7 +209,7 @@ def run_ingest_and_submit_cycle(
     )
     requeued = repo.requeue_submitting_items()
     if requeued:
-        log.warning("requeued %d interrupted distillation submissions", requeued)
+        log.warning("requeued %d legacy submitting items", requeued)
     submitted, failed = _submit_new_items(
         repo,
         distill_client=distill_client,

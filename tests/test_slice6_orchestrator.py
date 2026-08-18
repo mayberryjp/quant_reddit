@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 import httpx
 import respx
@@ -118,7 +117,7 @@ class TestFullCycle:
         assert first.items_distilled == 4
         assert first.items_failed == 0
         stored = repo.get_distillation("t3_p0")
-        assert stored.request["text"] == "x" * 800
+        assert stored.request["text"] == "x" * 880
         assert stored.response["distillation"]["summary"] == "summary for t3_p0"
         assert stored.response["sentiment"]["observations"][0]["subject"] == "GME"
         assert stored.response["entities"]["items"][0]["ticker"] == "GME"
@@ -249,27 +248,6 @@ class TestFullCycle:
 
 
 class TestRunForever:
-    def test_ingest_submits_items_concurrently(self, repo, monkeypatch):
-        barrier = threading.Barrier(2)
-        monkeypatch.setattr("app.services.orchestrator.settings.distill_submit_workers", 2)
-
-        def submit_together(self, item):
-            barrier.wait(timeout=1)
-            return f"job-{item.fullname}", {"source_item_id": item.fullname}
-
-        monkeypatch.setattr(DistillClient, "submit", submit_together)
-
-        result = run_ingest_and_submit_cycle(
-            repo,
-            reddit_source=FakeSource(posts=[_post("parallel-a"), _post("parallel-b")]),
-            distill_client=DistillClient(base_url=BASE_URL, retries=1),
-            subreddits=["wallstreetbets"],
-        )
-
-        assert result.items_submitted == 2
-        assert repo.get_item("t3_parallel-a").process_state is ProcessState.submitted
-        assert repo.get_item("t3_parallel-b").process_state is ProcessState.submitted
-
     @respx.mock
     def test_ingest_worker_submits_without_polling(self, repo):
         respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
