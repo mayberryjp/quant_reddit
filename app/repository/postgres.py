@@ -157,6 +157,42 @@ class RedditRepository:
                 )
             )
 
+    def claim_new_items_for_submission(self) -> list[RedditItem]:
+        """Atomically move pending items to ``submitting`` and return those claimed."""
+        claimed: list[RedditItem] = []
+        with self.engine.begin() as conn:
+            rows = (
+                conn.execute(
+                    sa.select(reddit_items)
+                    .where(reddit_items.c.process_state == ProcessState.new.value)
+                    .order_by(reddit_items.c.created_utc.asc(), reddit_items.c.id.asc())
+                )
+                .mappings()
+                .all()
+            )
+            for row in rows:
+                result = conn.execute(
+                    sa.update(reddit_items)
+                    .where(
+                        reddit_items.c.fullname == row["fullname"],
+                        reddit_items.c.process_state == ProcessState.new.value,
+                    )
+                    .values(process_state=ProcessState.submitting.value)
+                )
+                if result.rowcount:
+                    claimed.append(_row_to_item(row))
+        return claimed
+
+    def requeue_submitting_items(self) -> int:
+        """Return interrupted submissions to ``new`` before a fresh ingest run."""
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                sa.update(reddit_items)
+                .where(reddit_items.c.process_state == ProcessState.submitting.value)
+                .values(process_state=ProcessState.new.value)
+            )
+        return result.rowcount
+
     def record_distill_failure(self, fullname: str, *, max_attempts: int) -> ProcessState:
         """Increment the attempt counter for a submit/job failure.
 
@@ -190,17 +226,19 @@ class RedditRepository:
         return final_state
 
     def list_items_by_state(
-        self, state: ProcessState | str, limit: int = 100
+        self, state: ProcessState | str, limit: int | None = 100
     ) -> list[RedditItem]:
         """Return items in a given process state, oldest created first."""
+        statement = (
+            sa.select(reddit_items)
+            .where(reddit_items.c.process_state == _val(state))
+            .order_by(reddit_items.c.created_utc.asc(), reddit_items.c.id.asc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
         with self.engine.connect() as conn:
             rows = (
-                conn.execute(
-                    sa.select(reddit_items)
-                    .where(reddit_items.c.process_state == _val(state))
-                    .order_by(reddit_items.c.created_utc.asc(), reddit_items.c.id.asc())
-                    .limit(limit)
-                )
+                conn.execute(statement)
                 .mappings()
                 .all()
             )

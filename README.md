@@ -27,8 +27,10 @@ Reddit -> reddit_items -> POST quant_distill /v1/process -> distillations
 ```
 
 Supervisord runs separate ingestion, processing, and Bottle API processes. The
-processing worker uses bounded retries for network failures and HTTP `503`. An item
-is marked `distilled` only after its request and successful response are persisted.
+ingestion worker submits each newly fetched item immediately; the processing worker
+only polls submitted jobs for completion. The workers use bounded retries for
+network failures and HTTP `503`. An item is marked `distilled` only after its
+request and successful response are persisted.
 
 ## API
 
@@ -46,6 +48,7 @@ is marked `distilled` only after its request and successful response are persist
 - `DATABASE_URL`: PostgreSQL DSN.
 - `QUANT_DISTILL_URL`: `quant_distill` base URL; the client appends `/v1/process`.
 - `QUANT_REDDIT_DISTILL_TIMEOUT`: request timeout in seconds, default `180`.
+- `QUANT_REDDIT_DISTILL_SUBMIT_WORKERS`: concurrent job submissions, default `16`.
 - `QUANT_REDDIT_HTTP_RETRIES`: total bounded attempts, default `3`.
 - `REDDIT_SOURCE_MODE`: `auto`, `praw`, or `scrape`.
 - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`: PRAW settings.

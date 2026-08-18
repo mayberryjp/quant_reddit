@@ -1,7 +1,7 @@
-"""Ingest-only worker entry point (supervisord ``[program:ingest_worker]``).
+"""Ingestion worker entry point (supervisord ``[program:ingest_worker]``).
 
-Fetches Reddit posts/comments and persists them into the ledger. It does not call
-the shared distillation API.
+Fetches Reddit posts/comments, persists them into the ledger, and immediately
+submits new items to the shared distillation API.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from app.config import log_config_problems, settings
 from app.db import get_engine
 from app.repository.postgres import RedditRepository
 from app.services import orchestrator
+from app.services.distill_client import DistillClient
 from app.services.reddit_client import build_reddit_source
 
 SERVICE_NAME = "quant-reddit-ingest-worker"
@@ -33,6 +34,7 @@ def main() -> None:
     orchestrator.run_ingest_forever(
         repo,
         reddit_source=reddit_source,
+        distill_client=DistillClient(),
         poll_interval=settings.ingest_interval,
     )
 

@@ -1,7 +1,7 @@
 """Process-only worker entry point (supervisord ``[program:process_worker]``).
 
-Submits ``new`` ledger items to quant_distill's async job queue and polls
-``submitted`` items for completion each cycle. Does not fetch Reddit posts/comments.
+Polls ``submitted`` quant_distill jobs for completion each cycle. It does not
+fetch Reddit posts/comments or submit new work.
 """
 
 from __future__ import annotations

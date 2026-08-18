@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import httpx
 import respx
 
 from app.models.domain import ProcessState
 from app.services.distill_client import DistillClient
-from app.services.orchestrator import HEARTBEAT_KEY, run_cycle, run_forever
+from app.services.orchestrator import (
+    HEARTBEAT_KEY,
+    run_cycle,
+    run_forever,
+    run_ingest_and_submit_cycle,
+    run_ingest_forever,
+)
 from app.services.reddit_client import RawPost
 
 BASE_URL = "http://distill.test:8021"
@@ -242,6 +249,47 @@ class TestFullCycle:
 
 
 class TestRunForever:
+    def test_ingest_submits_items_concurrently(self, repo, monkeypatch):
+        barrier = threading.Barrier(2)
+        monkeypatch.setattr("app.services.orchestrator.settings.distill_submit_workers", 2)
+
+        def submit_together(self, item):
+            barrier.wait(timeout=1)
+            return f"job-{item.fullname}", {"source_item_id": item.fullname}
+
+        monkeypatch.setattr(DistillClient, "submit", submit_together)
+
+        result = run_ingest_and_submit_cycle(
+            repo,
+            reddit_source=FakeSource(posts=[_post("parallel-a"), _post("parallel-b")]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            subreddits=["wallstreetbets"],
+        )
+
+        assert result.items_submitted == 2
+        assert repo.get_item("t3_parallel-a").process_state is ProcessState.submitted
+        assert repo.get_item("t3_parallel-b").process_state is ProcessState.submitted
+
+    @respx.mock
+    def test_ingest_worker_submits_without_polling(self, repo):
+        respx.post(PROCESS_URL).mock(side_effect=_mock_submit)
+        jobs_route = respx.get(url__regex=rf"{JOBS_URL}/.*").mock(
+            side_effect=_mock_job_succeeded
+        )
+
+        run_ingest_forever(
+            repo,
+            reddit_source=FakeSource(posts=[_post("submitted")]),
+            distill_client=DistillClient(base_url=BASE_URL, retries=1),
+            run_once=True,
+            subreddits=["wallstreetbets"],
+        )
+
+        item = repo.get_item("t3_submitted")
+        assert item.process_state is ProcessState.submitted
+        assert item.job_id == "job-t3_submitted"
+        assert jobs_route.call_count == 0
+
     @respx.mock
     def test_run_once_drives_a_cycle(self, repo):
         respx.post(PROCESS_URL).mock(side_effect=_mock_submit)

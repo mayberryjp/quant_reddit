@@ -2,10 +2,10 @@
 
 ``run_cycle`` performs a single pass:
 
-1. **Ingest** new posts + selective comments (Slice 2).
-2. **Submit** each ``new`` item to ``quant_distill``'s async ``/v1/process`` job
-   queue (item moves to ``submitted``, tagged with the returned ``job_id``).
-3. **Poll** each ``submitted`` item's job; on ``succeeded`` persist the exact
+1. **Ingest** new posts + selective comments (Slice 2), then immediately submit
+    each ``new`` item to quant_distill's async ``/v1/process`` job queue (the item
+    moves to ``submitted``, tagged with the returned ``job_id``).
+2. **Poll** each ``submitted`` item's job; on ``succeeded`` persist the exact
    request and authoritative result and move to ``distilled``, on ``failed``
    increment its attempt counter and reset it to ``new`` for resubmission next
    cycle (permanently ``failed`` once ``QUANT_REDDIT_DISTILL_MAX_ATTEMPTS`` is
@@ -22,6 +22,7 @@ with all externals stubbed.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import signal
 import threading
@@ -98,23 +99,36 @@ def _submit_new_items(
     repo: RedditRepository,
     *,
     distill_client: DistillClient,
-    limit: int,
     max_attempts: int,
 ) -> tuple[int, int]:
-    """Submit ``new`` items to quant_distill. Returns ``(submitted, failed)``."""
+    """Concurrently submit claimed items. Returns ``(submitted, failed)``."""
     submitted = 0
     failed = 0
-    for item in repo.list_items_by_state(ProcessState.new, limit=limit):
+    items = repo.claim_new_items_for_submission()
+    if not items:
+        return submitted, failed
+
+    def submit_item(item):
         try:
             job_id, request = distill_client.submit(item)
-            repo.mark_item_submitted(item.fullname, job_id=job_id, request=request)
-            submitted += 1
-        except DistillApiError:
-            log.exception("distill submission failed for %s", item.fullname)
-            final_state = repo.record_distill_failure(
-                item.fullname, max_attempts=max_attempts
-            )
-            if final_state is ProcessState.failed:
+            return item, job_id, request, None
+        except Exception as exc:  # noqa: BLE001 - one submission must not block the batch
+            return item, None, None, exc
+
+    worker_count = min(len(items), max(1, settings.distill_submit_workers))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="distill-submit") as executor:
+        futures = [executor.submit(submit_item, item) for item in items]
+        for future in as_completed(futures):
+            item, job_id, request, error = future.result()
+            if error is None:
+                repo.mark_item_submitted(item.fullname, job_id=job_id, request=request)
+                submitted += 1
+                continue
+            log.error("distill submission failed for %s", item.fullname, exc_info=error)
+            if (
+                repo.record_distill_failure(item.fullname, max_attempts=max_attempts)
+                is ProcessState.failed
+            ):
                 failed += 1
     return submitted, failed
 
@@ -185,6 +199,45 @@ def _poll_submitted_items(
     return distilled, failed
 
 
+def run_ingest_and_submit_cycle(
+    repo: RedditRepository,
+    *,
+    reddit_source: RedditSource,
+    distill_client: DistillClient,
+    subreddits: list[str] | None = None,
+    post_batch: int | None = None,
+    comments_per_post: int | None = None,
+    distill_limit: int = _DEFAULT_DISTILL_LIMIT,
+    distill_max_attempts: int | None = None,
+) -> CycleResult:
+    """Ingest Reddit items and immediately submit pending items for distillation."""
+    ingest_result = run_ingest_cycle(
+        repo,
+        reddit_source=reddit_source,
+        subreddits=subreddits,
+        post_batch=post_batch,
+        comments_per_post=comments_per_post,
+    )
+    max_attempts = (
+        distill_max_attempts
+        if distill_max_attempts is not None
+        else settings.distill_max_attempts
+    )
+    requeued = repo.requeue_submitting_items()
+    if requeued:
+        log.warning("requeued %d interrupted distillation submissions", requeued)
+    submitted, failed = _submit_new_items(
+        repo,
+        distill_client=distill_client,
+        max_attempts=max_attempts,
+    )
+    return CycleResult(
+        ingest=ingest_result,
+        items_submitted=submitted,
+        items_failed=failed,
+    )
+
+
 def run_process_cycle(
     repo: RedditRepository,
     *,
@@ -192,20 +245,17 @@ def run_process_cycle(
     distill_limit: int = _DEFAULT_DISTILL_LIMIT,
     distill_max_attempts: int | None = None,
 ) -> ProcessResult:
-    """Run one process-only cycle: submit ``new`` items, poll ``submitted`` ones."""
+    """Run one process-only cycle: poll ``submitted`` jobs for completion."""
     max_attempts = (
         distill_max_attempts
         if distill_max_attempts is not None
         else settings.distill_max_attempts
     )
     result = ProcessResult()
-    result.items_submitted, submit_failed = _submit_new_items(
-        repo, distill_client=distill_client, limit=distill_limit, max_attempts=max_attempts
-    )
     result.items_distilled, poll_failed = _poll_submitted_items(
         repo, distill_client=distill_client, limit=distill_limit, max_attempts=max_attempts
     )
-    result.items_failed = submit_failed + poll_failed
+    result.items_failed = poll_failed
     return result
 
 
@@ -220,13 +270,16 @@ def run_cycle(
     distill_limit: int = _DEFAULT_DISTILL_LIMIT,
     distill_max_attempts: int | None = None,
 ) -> CycleResult:
-    """Run one full ``ingest → submit/poll`` cycle. Idempotent on re-run."""
-    ingest_result = run_ingest_cycle(
+    """Run one full ``ingest -> submit -> poll`` cycle. Idempotent on re-run."""
+    result = run_ingest_and_submit_cycle(
         repo,
         reddit_source=reddit_source,
+        distill_client=distill_client,
         subreddits=subreddits,
         post_batch=post_batch,
         comments_per_post=comments_per_post,
+        distill_limit=distill_limit,
+        distill_max_attempts=distill_max_attempts,
     )
     process_result = run_process_cycle(
         repo,
@@ -235,10 +288,8 @@ def run_cycle(
         distill_max_attempts=distill_max_attempts,
     )
 
-    result = CycleResult(ingest=ingest_result)
-    result.items_submitted = process_result.items_submitted
     result.items_distilled = process_result.items_distilled
-    result.items_failed = process_result.items_failed
+    result.items_failed += process_result.items_failed
 
     repo.set_heartbeat()
     return result
@@ -257,11 +308,12 @@ def run_ingest_forever(
     repo: RedditRepository,
     *,
     reddit_source: RedditSource,
+    distill_client: DistillClient,
     poll_interval: int | None = None,
     run_once: bool = False,
     **ingest_kwargs,
 ) -> None:
-    """Run ingest-only cycles until stopped."""
+    """Run ingest-and-submit cycles until stopped."""
     poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
     stop = threading.Event()
 
@@ -273,9 +325,10 @@ def run_ingest_forever(
         started = utcnow()
         error: str | None = None
         try:
-            ingest_result = run_ingest_cycle(
+            ingest_result = run_ingest_and_submit_cycle(
                 repo,
                 reddit_source=reddit_source,
+                distill_client=distill_client,
                 **ingest_kwargs,
             )
             log.info("ingest cycle complete: %s", ingest_result.as_dict())

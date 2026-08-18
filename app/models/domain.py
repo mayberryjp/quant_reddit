@@ -21,6 +21,7 @@ class RedditKind(str, enum.Enum):
 
 class ProcessState(str, enum.Enum):
     new = "new"
+    submitting = "submitting"
     submitted = "submitted"
     distilled = "distilled"
     skipped = "skipped"
