@@ -534,6 +534,9 @@ class IngestResult:
     def as_dict(self) -> dict:
         return self.__dict__.copy()
 
+    def is_idle(self) -> bool:
+        return not (self.posts_new or self.comments_new or self.errors)
+
 
 def _epoch_to_utc(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, tz=timezone.utc)

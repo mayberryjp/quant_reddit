@@ -55,6 +55,11 @@ class CycleResult:
         data["ingest"] = self.ingest.as_dict()
         return data
 
+    def is_idle(self) -> bool:
+        return self.ingest.is_idle() and not (
+            self.items_submitted or self.items_distilled or self.items_failed
+        )
+
 
 @dataclass
 class ProcessResult:
@@ -315,7 +320,8 @@ def run_ingest_forever(
                 distill_client=distill_client,
                 **ingest_kwargs,
             )
-            log.info("ingest cycle complete: %s", ingest_result.as_dict())
+            level = logging.DEBUG if ingest_result.is_idle() else logging.INFO
+            log.log(level, "ingest cycle complete: %s", ingest_result.as_dict())
         except Exception as exc:  # noqa: BLE001
             log.exception("ingest cycle failed")
             error = str(exc)
@@ -366,7 +372,6 @@ def run_process_forever(
                 distill_client=distill_client,
                 **process_kwargs,
             )
-            log.info("process cycle complete: %s", process_result.as_dict())
             repo.set_heartbeat()
         except Exception as exc:  # noqa: BLE001
             log.exception("process cycle failed")
@@ -418,7 +423,8 @@ def run_forever(
                 distill_client=distill_client,
                 **cycle_kwargs,
             )
-            log.info("cycle complete: %s", result.as_dict())
+            level = logging.DEBUG if result.is_idle() else logging.INFO
+            log.log(level, "cycle complete: %s", result.as_dict())
         except Exception:  # noqa: BLE001 - a cycle failure must not kill the worker
             log.exception("orchestrator cycle failed")
 
