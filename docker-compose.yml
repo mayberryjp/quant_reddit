@@ -27,5 +27,7 @@ services:
       REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-docker:quant_reddit:v0.1.0 (by /u/homelabids)}
       REDDIT_USERNAME: ${REDDIT_USERNAME:-}
       REDDIT_PASSWORD: ${REDDIT_PASSWORD:-}
+    volumes:
+      - ./local_dumps:/app/local_dumps
     ports:
       - "8018:8018"
