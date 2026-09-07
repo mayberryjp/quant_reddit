@@ -2,6 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    TZ=America/New_York \
     API_LISTEN_ADDRESS=0.0.0.0 \
     API_PORT=8018 \
     REDDIT_SOURCE_MODE=auto \
@@ -25,7 +26,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends supervisor \
+    && apt-get install -y --no-install-recommends supervisor tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

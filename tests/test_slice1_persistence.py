@@ -25,9 +25,9 @@ class TestDomainModels:
         assert restored.kind is RedditKind.post
         assert restored.process_state is ProcessState.new
 
-    def test_naive_datetime_coerced_to_utc(self, make_item):
+    def test_naive_datetime_coerced_to_local(self, make_item):
         item = make_item(created_utc=datetime(2026, 1, 1, 12, 0, 0))
-        assert item.created_utc.utcoffset().total_seconds() == 0
+        assert item.created_utc == datetime(2026, 1, 1, 12, 0, 0).astimezone()
 
 
 class TestRedditItems:

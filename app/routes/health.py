@@ -10,7 +10,7 @@ from __future__ import annotations
 from bottle import Bottle, response
 
 from app.dependencies import get_repo
-from app.timeutil import to_utc
+from app.timeutil import to_local
 
 sub = Bottle()
 
@@ -38,8 +38,8 @@ def stats():
     """Operational counters computed from the ledger, plus worker heartbeat."""
     repo = get_repo()
     data = repo.stats()
-    last_fetched = to_utc(data["last_fetched_at"])
-    heartbeat = to_utc(repo.get_heartbeat())
+    last_fetched = to_local(data["last_fetched_at"])
+    heartbeat = to_local(repo.get_heartbeat())
     return {
         "items_ingested": data["items_ingested"],
         "items_by_state": data["items_by_state"],

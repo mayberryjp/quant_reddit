@@ -28,7 +28,7 @@ from app.repository.schema import (
     ingest_cursor,
     reddit_items,
 )
-from app.timeutil import to_utc, utcnow
+from app.timeutil import localnow, to_local
 
 
 def _val(value):
@@ -67,8 +67,8 @@ def _item_to_row(item: RedditItem) -> dict:
 def _row_to_item(row) -> RedditItem:
     data = dict(row)
     data.pop("id", None)
-    data["created_utc"] = to_utc(data.get("created_utc"))
-    data["fetched_at"] = to_utc(data.get("fetched_at"))
+    data["created_utc"] = to_local(data.get("created_utc"))
+    data["fetched_at"] = to_local(data.get("fetched_at"))
     return RedditItem(**data)
 
 
@@ -79,21 +79,21 @@ def _distillation_to_row(record: DistillationRecord) -> dict:
 def _row_to_distillation(row) -> DistillationRecord:
     data = dict(row)
     data.pop("id", None)
-    data["created_at"] = to_utc(data.get("created_at"))
+    data["created_at"] = to_local(data.get("created_at"))
     return DistillationRecord(**data)
 
 
 def _row_to_cursor(row) -> IngestCursor:
     data = dict(row)
-    data["last_created_utc"] = to_utc(data.get("last_created_utc"))
-    data["updated_at"] = to_utc(data.get("updated_at"))
+    data["last_created_utc"] = to_local(data.get("last_created_utc"))
+    data["updated_at"] = to_local(data.get("updated_at"))
     return IngestCursor(**data)
 
 
 def _row_to_run(row) -> CycleRun:
     data = dict(row)
-    data["started_at"] = to_utc(data.get("started_at"))
-    data["finished_at"] = to_utc(data.get("finished_at"))
+    data["started_at"] = to_local(data.get("started_at"))
+    data["finished_at"] = to_local(data.get("finished_at"))
     return CycleRun(**data)
 
 
@@ -276,7 +276,7 @@ class RedditRepository:
         last_fullname: str | None = None,
         last_created_utc: datetime | None = None,
     ) -> IngestCursor:
-        now = utcnow()
+        now = localnow()
         with self.engine.begin() as conn:
             exists = (
                 conn.execute(

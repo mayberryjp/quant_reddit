@@ -28,7 +28,7 @@ from typing import Iterable, Protocol
 from app.config import settings
 from app.models.domain import ProcessState, RedditItem, RedditKind
 from app.repository.postgres import RedditRepository
-from app.timeutil import utcnow
+from app.timeutil import localnow
 
 log = logging.getLogger("quant_reddit.reddit_client")
 
@@ -538,8 +538,8 @@ class IngestResult:
         return not (self.posts_new or self.comments_new or self.errors)
 
 
-def _epoch_to_utc(epoch: float) -> datetime:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+def _epoch_to_local(epoch: float) -> datetime:
+    return datetime.fromtimestamp(epoch).astimezone()
 
 
 def _normalize_epoch(epoch: float | int | None) -> float | None:
@@ -566,7 +566,7 @@ def _safe_created_utc(epoch: float | int | None, fallback: datetime) -> datetime
     normalized = _normalize_epoch(epoch)
     if normalized is None:
         return fallback
-    return _epoch_to_utc(normalized)
+    return _epoch_to_local(normalized)
 
 
 def has_ticker_mention(text: str) -> bool:
@@ -651,7 +651,7 @@ def ingest_once(
     cursor_key = cursor_key or f"{subreddit}:new"
 
     result = IngestResult()
-    fetched_at = utcnow()
+    fetched_at = localnow()
 
     try:
         posts = list(source.new_posts(subreddit, post_batch))

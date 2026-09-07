@@ -3,6 +3,7 @@ services:
     build: .
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to an external PostgreSQL database}
+      TZ: ${TZ:-America/New_York}
       API_LISTEN_ADDRESS: 0.0.0.0
       API_PORT: "8018"
       QUANT_DISTILL_URL: ${QUANT_DISTILL_URL:-http://distill.quant.mayberry.farm:8021}

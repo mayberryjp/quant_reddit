@@ -32,7 +32,7 @@ from app.models.domain import CycleRun, DistillationRecord, ProcessState
 from app.repository.postgres import HEARTBEAT_SOURCE_KEY, RedditRepository
 from app.services.distill_client import DistillApiError, DistillClient
 from app.services.reddit_client import IngestResult, RedditSource, ingest_once
-from app.timeutil import utcnow
+from app.timeutil import localnow
 
 log = logging.getLogger("quant_reddit.orchestrator")
 
@@ -169,7 +169,7 @@ def _poll_submitted_items(
                     request_id=job.get("job_id") or item.job_id,
                     request=item.distill_request or {},
                     response=result,
-                    created_at=utcnow(),
+                    created_at=localnow(),
                 )
             )
             repo.set_item_state(item.fullname, ProcessState.distilled)
@@ -311,7 +311,7 @@ def run_ingest_forever(
 
     log.info("ingest worker starting (poll interval %ss)", poll_interval)
     while True:
-        started = utcnow()
+        started = localnow()
         error: str | None = None
         try:
             ingest_result = run_ingest_and_submit_cycle(
@@ -331,7 +331,7 @@ def run_ingest_forever(
                 CycleRun(
                     run_type="ingest",
                     started_at=started,
-                    finished_at=utcnow(),
+                    finished_at=localnow(),
                     result=ingest_result.as_dict(),
                     error=error,
                 )
@@ -364,7 +364,7 @@ def run_process_forever(
 
     log.info("process worker starting (poll interval %ss)", poll_interval)
     while True:
-        started = utcnow()
+        started = localnow()
         error: str | None = None
         try:
             process_result = run_process_cycle(
@@ -382,7 +382,7 @@ def run_process_forever(
                 CycleRun(
                     run_type="process",
                     started_at=started,
-                    finished_at=utcnow(),
+                    finished_at=localnow(),
                     result=process_result.as_dict(),
                     error=error,
                 )

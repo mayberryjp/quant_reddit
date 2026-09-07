@@ -1,14 +1,15 @@
 """Domain models for the reddit audit + idempotency ledger.
 
 All models use Pydantic v2 and mirror the columns of the ``reddit`` schema tables.
-Timestamps are normalized to timezone-aware UTC so behaviour is identical across
-PostgreSQL (``TIMESTAMPTZ``) and the SQLite test backend (naive datetimes).
+Timestamps are normalized to the container's local time zone (e.g. New York) so
+behaviour is identical across PostgreSQL (``TIMESTAMPTZ``) and the SQLite test
+backend (naive datetimes).
 """
 
 from __future__ import annotations
 
 import enum
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -27,12 +28,10 @@ class ProcessState(str, enum.Enum):
     failed = "failed"
 
 
-def _ensure_utc(value: datetime | None) -> datetime | None:
+def _ensure_local(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    return value.astimezone()
 
 
 class RedditItem(BaseModel):
@@ -57,8 +56,8 @@ class RedditItem(BaseModel):
 
     @field_validator("created_utc", "fetched_at", mode="after")
     @classmethod
-    def _utc(cls, value: datetime) -> datetime:
-        return _ensure_utc(value)
+    def _local(cls, value: datetime) -> datetime:
+        return _ensure_local(value)
 
 
 class DistillationRecord(BaseModel):
@@ -73,8 +72,8 @@ class DistillationRecord(BaseModel):
 
     @field_validator("created_at", mode="after")
     @classmethod
-    def _utc(cls, value: datetime) -> datetime:
-        return _ensure_utc(value)
+    def _local(cls, value: datetime) -> datetime:
+        return _ensure_local(value)
 
 
 class IngestCursor(BaseModel):
@@ -87,8 +86,8 @@ class IngestCursor(BaseModel):
 
     @field_validator("last_created_utc", "updated_at", mode="after")
     @classmethod
-    def _utc(cls, value: datetime | None) -> datetime | None:
-        return _ensure_utc(value)
+    def _local(cls, value: datetime | None) -> datetime | None:
+        return _ensure_local(value)
 
 
 class CycleRun(BaseModel):
@@ -103,5 +102,5 @@ class CycleRun(BaseModel):
 
     @field_validator("started_at", "finished_at", mode="after")
     @classmethod
-    def _utc(cls, value: datetime) -> datetime:
-        return _ensure_utc(value)
+    def _local(cls, value: datetime) -> datetime:
+        return _ensure_local(value)
